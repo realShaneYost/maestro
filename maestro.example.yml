@@ -1,0 +1,30 @@
+# Maestro configuration. Copy this file to maestro.yml and edit.
+# maestro.yml is gitignored; this example is committed.
+
+# --- Required ---
+
+# Absolute path to the git repository Maestro drives.
+repo_path: "/Users/you/__repos/your-project"
+
+# GitHub "owner/name" slug for that repository.
+repo_slug: "your-org/your-project"
+
+# GitHub Projects V2 board number to poll.
+project_number: 1
+
+# Status-field value that means "dispatch this issue".
+trigger_column: "In Progress"
+
+# --- Optional (defaults shown) ---
+
+# Hard ceiling on simultaneously running workers. Each worker is heavy.
+max_concurrent: 2
+
+# Seconds between board polls.
+poll_interval: 60
+
+# Prompt handed to each worker. Must contain the {issue} placeholder.
+worker_prompt: "/cc-work {issue}"
+
+# Colour theme for `maestro status`. Built in: nord, dark, light.
+theme: "nord"
