@@ -21,3 +21,6 @@ logs/
 worktrees/
 runs.jsonl
 *.log
+
+# macOS
+.DS_Store

@@ -94,7 +94,8 @@ class WorktreeManager:
         """Create a detached worktree off ``origin/main`` for ``issue_number``.
 
         Fetches ``origin`` first so the worktree is cut from current main. The
-        worktree starts detached; the worker creates its own branch inside it.
+        worktree starts detached; the worker creates its own branch inside it,
+        and the repo's ``.venv`` is symlinked in so quality-gate tools work.
         The caller must ensure no worktree for this issue already exists.
 
         Args:
@@ -117,7 +118,20 @@ class WorktreeManager:
                 "origin/main",
             ]
         )
+        self._link_venv(path)
         return path
+
+    def _link_venv(self, worktree: Path) -> None:
+        """Symlink the target repo's ``.venv`` into ``worktree``.
+
+        A fresh worktree omits ``.venv`` (it is gitignored), so a worker would
+        have no quality-gate tools. The symlink restores them. Best-effort: if
+        the repo has no ``.venv``, nothing is linked.
+        """
+        source = self._repo / ".venv"
+        link = worktree / ".venv"
+        if source.is_dir() and not link.exists():
+            link.symlink_to(source, target_is_directory=True)
 
     def remove(self, path: Path) -> None:
         """Remove the worktree at ``path``, discarding any uncommitted changes."""
