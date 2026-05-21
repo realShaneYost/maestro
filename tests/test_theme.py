@@ -13,7 +13,7 @@ def test_default_theme_is_available():
 
 def test_load_theme_returns_theme_with_semantic_styles():
     theme = load_theme("nord")
-    for style in ("running", "done", "blocked", "failed", "queued"):
+    for style in ("issue", "timestamp", "message", "error"):
         assert style in theme.styles
 
 

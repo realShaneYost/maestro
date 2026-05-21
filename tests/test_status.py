@@ -1,85 +1,152 @@
-"""Tests for worker status reconstruction and rendering."""
+"""Tests for worker-log status rendering."""
 
 from __future__ import annotations
 
-from pathlib import Path
+import json
 
 from maestro.status import (
-    WorkerStatus,
-    _humanize,
-    _status_table,
-    _truncate,
-    collect_statuses,
+    LogLine,
+    _issue_of,
+    _parse_event_line,
+    _render_line,
+    _short_title,
+    _summarize,
+    recent_lines,
 )
-from maestro.worktree import WorktreeManager
 
 
-def _porcelain(worktrees_dir: Path, *issues: int) -> str:
-    blocks = ["worktree /some/repo\nHEAD aaa\nbranch refs/heads/main"]
-    for number in issues:
-        blocks.append(f"worktree {worktrees_dir}/issue-{number}\nHEAD bbb\ndetached")
-    return "\n\n".join(blocks) + "\n"
+def test_issue_of_extracts_number(tmp_path):
+    assert _issue_of(tmp_path / "issue-58.log") == 58
+    assert _issue_of(tmp_path / "notes.log") is None
 
 
-def _manager(worktrees_dir: Path, porcelain: str) -> WorktreeManager:
-    return WorktreeManager(Path("/repo"), worktrees_dir, runner=lambda _args: porcelain)
-
-
-def test_collect_statuses_empty(tmp_path):
-    wt_dir = tmp_path / "worktrees"
-    manager = _manager(wt_dir, _porcelain(wt_dir))
-    assert collect_statuses(manager, tmp_path / "logs") == []
-
-
-def test_collect_statuses_reads_log_tail(tmp_path):
-    wt_dir = tmp_path / "worktrees"
-    logs = tmp_path / "logs"
-    logs.mkdir()
-    (logs / "issue-7.log").write_text("starting\nworking on it\n\n", encoding="utf-8")
-    manager = _manager(wt_dir, _porcelain(wt_dir, 7))
-    result = collect_statuses(manager, logs)
-    assert len(result) == 1
-    assert result[0].issue == 7
-    assert result[0].last_line == "working on it"
-    assert result[0].last_activity is not None
-
-
-def test_collect_statuses_sorted_by_issue(tmp_path):
-    wt_dir = tmp_path / "worktrees"
-    manager = _manager(wt_dir, _porcelain(wt_dir, 9, 2, 5))
-    result = collect_statuses(manager, tmp_path / "logs")
-    assert [s.issue for s in result] == [2, 5, 9]
-
-
-def test_collect_statuses_handles_missing_log(tmp_path):
-    wt_dir = tmp_path / "worktrees"
-    manager = _manager(wt_dir, _porcelain(wt_dir, 3))
-    result = collect_statuses(manager, tmp_path / "logs")
-    assert result[0].last_activity is None
-    assert result[0].last_line == ""
-
-
-def test_humanize_formats_deltas():
-    assert _humanize(None) == "—"
-    assert _humanize(5) == "5s ago"
-    assert _humanize(125) == "2m ago"
-    assert _humanize(7200) == "2h ago"
-
-
-def test_truncate_shortens_long_text():
-    assert _truncate("short", 80) == "short"
-    out = _truncate("x" * 100, 10)
-    assert len(out) == 10
+def test_short_title_truncates_long_titles():
+    assert _short_title("short") == "short"
+    out = _short_title("a very long issue title here", 15)
+    assert len(out) == 15
     assert out.endswith("…")
 
 
-def test_status_table_row_count():
-    statuses = [
-        WorkerStatus(issue=1, last_activity=10, last_line="a"),
-        WorkerStatus(issue=2, last_activity=None, last_line="b"),
-    ]
-    assert _status_table(statuses, max_concurrent=2).row_count == 2
+def test_summarize_system_event():
+    assert _summarize({"type": "system", "subtype": "init"}) == "session init"
 
 
-def test_status_table_empty_shows_placeholder():
-    assert _status_table([], max_concurrent=2).row_count == 1
+def test_summarize_result_event():
+    assert _summarize({"type": "result", "subtype": "success"}) == "finished: success"
+
+
+def test_summarize_result_drops_cost_keeps_duration_and_turns():
+    message = _summarize(
+        {
+            "type": "result",
+            "subtype": "success",
+            "total_cost_usd": 1.5,
+            "duration_ms": 288706,
+            "num_turns": 43,
+        }
+    )
+    assert message is not None
+    assert "finished: success" in message
+    assert "43 turns" in message
+    assert "$" not in message
+
+
+def test_summarize_rate_limit_event():
+    assert _summarize({"type": "rate_limit_event"}) == "rate limit reached — waiting"
+
+
+def test_summarize_tool_use_shows_bash_detail():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Bash",
+                    "input": {"description": "Fetch origin", "command": "git fetch"},
+                }
+            ]
+        },
+    }
+    assert _summarize(event) == "Bash: Fetch origin"
+
+
+def test_summarize_tool_use_shows_edited_file():
+    event = {
+        "type": "assistant",
+        "message": {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "name": "Edit",
+                    "input": {"file_path": "docs/WORKFLOW.md"},
+                }
+            ]
+        },
+    }
+    assert _summarize(event) == "Edit: docs/WORKFLOW.md"
+
+
+def test_summarize_skips_user_events():
+    assert _summarize({"type": "user", "message": {}}) is None
+
+
+def test_parse_event_line_valid_json():
+    line = _parse_event_line(7, json.dumps({"type": "system", "subtype": "init"}))
+    assert line is not None
+    assert line.issue == 7
+    assert line.message == "session init"
+    assert line.is_error is False
+
+
+def test_parse_event_line_blank_is_skipped():
+    assert _parse_event_line(7, "   ") is None
+
+
+def test_parse_event_line_non_json_is_flagged_error():
+    line = _parse_event_line(7, "Traceback (most recent call last):")
+    assert line is not None
+    assert line.is_error is True
+    assert "Traceback" in line.message
+
+
+def test_parse_event_line_marks_error_results():
+    line = _parse_event_line(7, json.dumps({"type": "result", "subtype": "error_x"}))
+    assert line is not None
+    assert line.is_error is True
+
+
+def test_recent_lines_reads_each_log(tmp_path):
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    events = (
+        json.dumps({"type": "system", "subtype": "init"})
+        + "\n"
+        + json.dumps({"type": "result", "subtype": "success"})
+        + "\n"
+    )
+    (logs / "issue-3.log").write_text(events, encoding="utf-8")
+    lines = recent_lines(logs)
+    assert [line.issue for line in lines] == [3, 3]
+    assert lines[0].message == "session init"
+
+
+def test_recent_lines_missing_dir_is_empty(tmp_path):
+    assert recent_lines(tmp_path / "absent") == []
+
+
+def test_render_line_contains_all_parts():
+    text = _render_line(
+        LogLine(issue=58, message="using Bash", is_error=False),
+        "12:00:00",
+        "Add a tagline",
+    )
+    assert "#58" in text.plain
+    assert "Add a tagline" in text.plain
+    assert "12:00:00" in text.plain
+    assert "using Bash" in text.plain
+
+
+def test_render_line_without_title_shows_number_only():
+    text = _render_line(LogLine(issue=58, message="m", is_error=False), "12:00:00", "")
+    assert text.plain.startswith("#58  ")

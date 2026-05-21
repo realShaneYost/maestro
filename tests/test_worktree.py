@@ -56,6 +56,14 @@ def test_create_makes_a_detached_worktree(repo, tmp_path):
     assert managed[0].branch is None  # detached HEAD
 
 
+def test_create_symlinks_venv_when_present(repo, tmp_path):
+    (repo / ".venv").mkdir()
+    path = WorktreeManager(repo, tmp_path / "worktrees").create(11)
+    venv_link = path / ".venv"
+    assert venv_link.is_symlink()
+    assert venv_link.resolve() == (repo / ".venv").resolve()
+
+
 def test_remove_deletes_the_worktree(repo, tmp_path):
     manager = WorktreeManager(repo, tmp_path / "worktrees")
     path = manager.create(7)

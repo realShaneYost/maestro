@@ -19,23 +19,40 @@ WORKER_AGENT = "claude"
 def build_worker_command(worker_prompt: str, issue_number: int) -> list[str]:
     """Build the argv for a worker process.
 
+    The worker runs headless and unattended, so it is spawned with flags that
+    let it work autonomously while keeping safety intact: ``acceptEdits``
+    auto-approves file edits (no human is there to prompt) while still
+    enforcing ``deny`` rules and firing PreToolUse hooks, and ``stream-json``
+    output emits the full agentic trace so the run is observable even if it
+    aborts.
+
     Args:
         worker_prompt: Prompt template containing the ``{issue}`` placeholder.
         issue_number: The issue the worker will run.
 
     Returns:
-        The argv list: the agent CLI in headless mode given the rendered prompt.
+        The argv list for the headless agent invocation.
     """
     prompt = worker_prompt.format(issue=issue_number)
-    return [WORKER_AGENT, "-p", prompt]
+    return [
+        WORKER_AGENT,
+        "-p",
+        prompt,
+        "--permission-mode",
+        "acceptEdits",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+    ]
 
 
 def spawn_worker(command: list[str], cwd: Path, log_path: Path) -> subprocess.Popen[bytes]:
     """Spawn ``command`` in ``cwd`` with output captured to ``log_path``.
 
-    The log file is opened in append mode so a re-dispatch adds to the same
-    audit log. The child receives its own duplicated file descriptor, so the
-    parent's handle is closed immediately without affecting the worker.
+    The log file is truncated on open, so it holds only the latest dispatch;
+    the cross-run record is ``runs.jsonl``. The child receives its own
+    duplicated file descriptor, so the parent's handle is closed immediately
+    without affecting the worker.
 
     Args:
         command: The worker argv, e.g. from :func:`build_worker_command`.
@@ -46,7 +63,7 @@ def spawn_worker(command: list[str], cwd: Path, log_path: Path) -> subprocess.Po
         The started process handle. The caller owns waiting on it.
     """
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("ab") as log_file:
+    with log_path.open("wb") as log_file:
         process: subprocess.Popen[bytes] = subprocess.Popen(
             command,
             cwd=str(cwd),

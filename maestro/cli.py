@@ -20,7 +20,7 @@ from maestro.core.models import Issue
 from maestro.core.scheduler import dispatchable_issues
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.loop import Loop
-from maestro.status import render_once, watch
+from maestro.status import render_recent, watch
 from maestro.theme import ThemeError, load_theme
 from maestro.worktree import WorktreeError, WorktreeManager
 
@@ -55,14 +55,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
-    """Handle ``maestro status`` — a snapshot, or a live view with --watch."""
+    """Handle ``maestro status`` — recent worker activity, live with --watch."""
     config = load_config(Path(args.config))
     console = Console(theme=load_theme(config.theme))
-    worktrees = WorktreeManager(config.repo_path, _WORKTREES_DIR)
     if args.watch:
-        watch(console, worktrees, _LOGS_DIR, config.max_concurrent)
+        watch(console, _LOGS_DIR, config.repo_slug)
     else:
-        render_once(console, worktrees, _LOGS_DIR, config.max_concurrent)
+        render_recent(console, _LOGS_DIR, config.repo_slug)
     return 0
 
 
@@ -73,7 +72,7 @@ def _print_dry_run(console: Console, issues: list[Issue]) -> None:
         return
     console.print(f"Dry run — would dispatch {len(issues)} issue(s):")
     for issue in issues:
-        console.print(f"  [running]#{issue.number}[/running]  {issue.title}")
+        console.print(f"  [issue]#{issue.number}[/issue]  {issue.title}")
 
 
 def _cmd_once(args: argparse.Namespace) -> int:

@@ -1,55 +1,37 @@
 """Colour themes for Maestro's terminal output.
 
-A theme maps Maestro's stable semantic style names — worker states and log
-levels — to concrete colours. Rendering code only ever refers to the semantic
-names, so adding a theme never touches rendering code. Nord is the default.
+A theme maps Maestro's stable style names — the parts of a worker-log line —
+to concrete colours. Rendering code refers only to the names, so adding a
+theme never touches rendering code. Nord is the default.
 """
 
 from __future__ import annotations
 
 from rich.theme import Theme
 
-# Every theme maps the same semantic style names to colours. Keep the key set
-# identical across themes so any theme is a drop-in replacement for any other.
+# Every theme maps the same style names to colours. Keep the key set identical
+# across themes so any theme is a drop-in replacement for any other.
 _THEMES: dict[str, dict[str, str]] = {
     "nord": {
-        "running": "#88c0d0",
-        "done": "#a3be8c",
-        "blocked": "#ebcb8b",
-        "failed": "#bf616a",
-        "queued": "#4c566a",
-        "header": "bold #eceff4",
-        "debug": "#4c566a",
-        "info": "#d8dee9",
-        "warning": "#ebcb8b",
+        "issue": "#88c0d0",
+        "timestamp": "#81a1c1",
+        "message": "#e5e9f0",
         "error": "bold #bf616a",
-        "critical": "bold #bf616a",
+        "header": "bold #eceff4",
     },
     "dark": {
-        "running": "cyan",
-        "done": "green",
-        "blocked": "yellow",
-        "failed": "red",
-        "queued": "bright_black",
-        "header": "bold white",
-        "debug": "bright_black",
-        "info": "white",
-        "warning": "yellow",
+        "issue": "cyan",
+        "timestamp": "blue",
+        "message": "white",
         "error": "bold red",
-        "critical": "bold red",
+        "header": "bold white",
     },
     "light": {
-        "running": "blue",
-        "done": "green",
-        "blocked": "dark_orange",
-        "failed": "red",
-        "queued": "grey50",
-        "header": "bold black",
-        "debug": "grey50",
-        "info": "black",
-        "warning": "dark_orange",
+        "issue": "blue",
+        "timestamp": "magenta",
+        "message": "black",
         "error": "bold red",
-        "critical": "bold red",
+        "header": "bold black",
     },
 }
 
@@ -72,7 +54,7 @@ def load_theme(name: str) -> Theme:
         name: A built-in theme name (see :func:`available_themes`).
 
     Returns:
-        A rich Theme mapping Maestro's semantic style names to colours.
+        A rich Theme mapping Maestro's style names to colours.
 
     Raises:
         ThemeError: If ``name`` is not a built-in theme.
