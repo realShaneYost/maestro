@@ -144,6 +144,63 @@ def test_run_survives_a_failed_poll(tmp_path):
     loop.run()  # a GitHubError from the poll must not propagate out of run()
 
 
+def test_tick_does_not_redispatch_a_just_finished_issue_still_in_trigger(tmp_path):
+    trigger = FakeTrigger(_board(1))
+    loop = _make_loop(tmp_path, trigger)
+    loop.tick()
+    assert set(loop._workers) == {1}
+    loop._workers[1].process.finish(0)
+    loop.tick()  # reap; card is still in the trigger column
+    assert loop._workers == {}
+    assert loop._recently_dispatched == {1}
+    loop.tick()  # next tick: guard still holds, no re-dispatch
+    assert loop._workers == {}
+    assert loop._recently_dispatched == {1}
+
+
+def test_recently_dispatched_releases_when_card_leaves_trigger(tmp_path):
+    trigger = FakeTrigger(_board(1))
+    loop = _make_loop(tmp_path, trigger)
+    loop.tick()
+    loop._workers[1].process.finish(0)
+    trigger.board = _board()  # card has left the trigger column
+    loop.tick()
+    assert loop._recently_dispatched == set()
+    trigger.board = _board(1)  # card re-enters the trigger column
+    loop.tick()
+    assert set(loop._workers) == {1}
+
+
+def test_recently_dispatched_releases_when_issue_closes(tmp_path):
+    trigger = FakeTrigger(_board(1))
+    loop = _make_loop(tmp_path, trigger)
+    loop.tick()
+    loop._workers[1].process.finish(0)
+    # Card stays in the trigger column, but the issue is no longer open.
+    issue = Issue(
+        number=1,
+        title="#1",
+        priority=None,
+        blocked_by=frozenset(),
+        in_trigger_column=True,
+    )
+    trigger.board = BoardState(issues=[issue], open_numbers=set())
+    loop.tick()
+    assert loop._recently_dispatched == set()
+
+
+def test_recently_dispatched_guards_failed_runs_too(tmp_path):
+    trigger = FakeTrigger(_board(1))
+    loop = _make_loop(tmp_path, trigger)
+    loop.tick()
+    loop._workers[1].process.finish(1)  # non-zero exit — failed run
+    loop.tick()
+    assert loop._workers == {}
+    assert loop._recently_dispatched == {1}
+    loop.tick()  # guard holds across subsequent ticks while the card stays
+    assert loop._workers == {}
+
+
 def test_tick_skips_issue_when_worktree_setup_fails(tmp_path):
     def boom(args: list[str]) -> str:
         if "worktree" in args and "add" in args:
