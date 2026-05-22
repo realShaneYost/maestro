@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from maestro.config import Config
 from maestro.core.models import BoardState, Issue
+from maestro.github import GitHubError
 from maestro.loop import Loop
 from maestro.runlog import read_runs
 from maestro.worktree import WorktreeError, WorktreeManager
@@ -30,6 +31,13 @@ class FakeTrigger:
 
     def poll(self) -> BoardState:
         return self.board
+
+
+class RaisingTrigger:
+    """A trigger source whose poll always fails, as a rate-limited one would."""
+
+    def poll(self) -> BoardState:
+        raise GitHubError("simulated rate-limit error")
 
 
 def _fake_spawn(command, cwd, log_path):
@@ -126,6 +134,14 @@ def test_run_exits_cleanly_on_interrupt(tmp_path):
 
     loop = _make_loop(tmp_path, FakeTrigger(_board()), sleep=interrupt)
     loop.run()  # must return without raising
+
+
+def test_run_survives_a_failed_poll(tmp_path):
+    def interrupt(_seconds):
+        raise KeyboardInterrupt
+
+    loop = _make_loop(tmp_path, RaisingTrigger(), sleep=interrupt)
+    loop.run()  # a GitHubError from the poll must not propagate out of run()
 
 
 def test_tick_skips_issue_when_worktree_setup_fails(tmp_path):
