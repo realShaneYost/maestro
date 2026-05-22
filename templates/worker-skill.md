@@ -22,7 +22,7 @@ Maestro invokes the worker with one input — an **issue number** — via the co
 
 4. **Implement.** Make the changes, following the repository's existing conventions and standards.
 
-5. **Verify.** Run the repository's quality gates — formatter, linter, type-checker, tests — and fix anything that fails. *Adapt this command list to the driven repository.*
+5. **Verify.** Run the repository's quality gates — formatter, linter, type-checker, tests — and fix anything that fails. *Adapt this command list to the driven repository.* If the gates will not run because the environment itself is broken (missing tools or extras), that is a blocker — see *When genuinely blocked* — not a bootstrap task.
 
 6. **Commit and push.** Make one commit per run and push the branch.
 
@@ -30,16 +30,23 @@ Maestro invokes the worker with one input — an **issue number** — via the co
 
 ## When genuinely blocked
 
-If the issue does not resolve a real fork between two reasonable paths, do not guess:
+The worker must escalate to the operator — never guess, never improvise — when:
 
-1. Post a comment on the issue with **explicit answer slots** — labelled `A:` / `B:` options, each with a one-line implication — never open-ended prose.
+- The issue does not resolve a real fork between two reasonable paths.
+- The prepared environment is unusable (for example, the worktree's venv is missing tools or extras needed to verify the work). That is an operator-side configuration problem, typically in `worktree_setup`; do not bootstrap it yourself or escalate sandbox permissions to work around it.
+
+In either case:
+
+1. Post a comment on the issue. For a **decision blocker**, use **explicit answer slots** — labelled `A:` / `B:` options, each with a one-line implication — never open-ended prose. For an **environment blocker**, describe what is missing and what needs to be installed or configured.
 2. Move the issue's project card to the **Blocked** column.
-3. Stop.
+3. Stop with a **non-zero exit status**. A clean exit tells Maestro the run completed successfully and would be recorded as `done`; a non-zero exit records it as a failure, which is the truthful outcome for a blocker.
 
-The operator answers and moves the card back into the trigger column; Maestro re-dispatches the issue, and the worker resumes from the answer.
+The operator answers (or fixes the environment) and moves the card back into the trigger column; Maestro re-dispatches the issue, and the worker resumes from the answer.
 
 ## What the worker must never do
 
 - Never merge, never force-push, never edit a closed issue.
 - Never assume `main` is checked out — always work from `origin/main`.
 - Never wait on CI or ask whether to merge — open the PR and stop.
+- Never use interactive tools like `AskUserQuestion`. Workers run headless (`claude -p ...`), so interactive prompts have no UI and go nowhere; operator-facing decisions go on the issue, per *When genuinely blocked*.
+- Never escalate sandbox permissions (for example, `dangerouslyDisableSandbox`) to work around a broken environment. Call it out as a blocker instead.
