@@ -23,6 +23,7 @@ from maestro.core.models import RunRecord
 from maestro.core.scheduler import dispatchable_issues
 from maestro.core.trigger import TriggerSource
 from maestro.dispatch import build_worker_command, spawn_worker
+from maestro.github import GitHubError
 from maestro.runlog import append_run
 from maestro.worktree import WorktreeError, WorktreeManager
 
@@ -104,11 +105,19 @@ class Loop:
             self._dispatch(issue.number)
 
     def run(self) -> None:
-        """Tick forever, sleeping between cycles, until interrupted."""
+        """Tick forever, sleeping between cycles, until interrupted.
+
+        A failed board poll — for example, a transient GitHub rate-limit
+        error — is logged and skipped; the loop retries on the next cycle
+        rather than terminating.
+        """
         logger.info("Maestro loop starting; polling every %ss", self._config.poll_interval)
         try:
             while True:
-                self.tick()
+                try:
+                    self.tick()
+                except GitHubError as err:
+                    logger.warning("Board poll failed; retrying next cycle: %s", err)
                 self._sleep(self._config.poll_interval)
         except KeyboardInterrupt:
             logger.info(
