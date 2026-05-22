@@ -60,6 +60,7 @@ def _config(tmp_path, max_concurrent=2) -> Config:
         poll_interval=60,
         worker_prompt="/cc-work {issue}",
         theme="nord",
+        worktree_setup=None,
     )
 
 

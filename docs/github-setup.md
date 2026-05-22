@@ -31,3 +31,7 @@ Maestro reads GitHub's native **"Blocked by"** issue relationships. An issue is 
 ## Worker skill
 
 The repository Maestro drives must provide a worker skill matching the configured `worker_prompt` (default `/cc-work {issue}`). It must take an issue number, work within a prepared git worktree, and open a PR. See `templates/worker-skill.md`.
+
+## Worktree environment
+
+Each worker runs in a throwaway git worktree. For a Python project whose workers change package code, set `worktree_setup` in `maestro.yml` to a command that builds an *isolated* virtualenv inside the worktree (for example, with `uv`). Without it, Maestro falls back to symlinking the target repo's `.venv` — one venv shared across all workers, pinned by its editable install to the primary checkout, so a worker's tests would run against the wrong code. See `maestro.example.yml` for the key.

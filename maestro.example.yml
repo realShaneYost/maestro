@@ -28,3 +28,10 @@ worker_prompt: "/cc-work {issue}"
 
 # Colour theme for `maestro status`. Built in: nord, dark, light.
 theme: "nord"
+
+# Shell command run inside each fresh worktree to provision its environment
+# (typically an isolated virtualenv). When unset, the target repo's .venv is
+# symlinked in instead -- but that venv's editable install points back at the
+# primary repo, so a worker's tests would run against the wrong code. Set this
+# for any repo whose workers change Python code. Example (requires uv):
+# worktree_setup: "uv venv .venv && uv pip install -e '.[dev]'"
