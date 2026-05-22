@@ -79,12 +79,12 @@ def test_summarize_tool_use_shows_edited_file():
                 {
                     "type": "tool_use",
                     "name": "Edit",
-                    "input": {"file_path": "docs/WORKFLOW.md"},
+                    "input": {"file_path": "obsidian-notes/WORKFLOW.md"},
                 }
             ]
         },
     }
-    assert _summarize(event) == "Edit: docs/WORKFLOW.md"
+    assert _summarize(event) == "Edit: obsidian-notes/WORKFLOW.md"
 
 
 def test_summarize_skips_user_events():
