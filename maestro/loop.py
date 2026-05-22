@@ -92,12 +92,30 @@ class Loop:
         self._spawn = spawn
         self._sleep = sleep
         self._workers: dict[int, _RunningWorker] = {}
+        # Issues reaped this session whose card has not yet been observed
+        # outside the trigger column or closed. The scheduler treats these as
+        # still in-flight, so a just-finished worker is not immediately
+        # re-dispatched while its card is still sitting in the trigger column.
+        # A `maestro run` restart starts the set empty by construction, which
+        # preserves the documented rework path of dropping a card back in.
+        self._recently_dispatched: set[int] = set()
 
     def tick(self) -> None:
-        """Run one cycle: reap finished workers, then poll and dispatch."""
+        """Run one cycle: reap finished workers, then poll and dispatch.
+
+        Issues whose worker has finished but whose card is still in the
+        trigger column are held in :attr:`_recently_dispatched` and counted
+        as in-flight, so they are not immediately re-dispatched. The guard
+        releases as soon as the card is observed outside the trigger column
+        or the issue closes.
+        """
         self._reap()
         board = self._trigger.poll()
-        in_flight = set(self._workers)
+        in_trigger = {issue.number for issue in board.issues if issue.in_trigger_column}
+        self._recently_dispatched = {
+            n for n in self._recently_dispatched if n in in_trigger and n in board.open_numbers
+        }
+        in_flight = set(self._workers) | self._recently_dispatched
         ready = dispatchable_issues(
             board.issues, board.open_numbers, in_flight, self._config.max_concurrent
         )
@@ -166,6 +184,7 @@ class Loop:
                     worker.worktree,
                 )
             del self._workers[issue]
+            self._recently_dispatched.add(issue)
             logger.info("Reaped worker for issue #%d (%s)", issue, outcome)
 
     def _remove_worktree(self, worktree: Path) -> None:
