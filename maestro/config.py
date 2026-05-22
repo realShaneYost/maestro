@@ -18,6 +18,7 @@ _DEFAULTS: dict[str, Any] = {
     "poll_interval": 60,
     "worker_prompt": "/cc-work {issue}",
     "theme": "nord",
+    "worktree_setup": None,
 }
 
 
@@ -39,6 +40,9 @@ class Config:
         worker_prompt: Prompt template handed to each worker; must contain the
             ``{issue}`` placeholder.
         theme: Name of the colour theme used by ``status``.
+        worktree_setup: Optional shell command run inside each fresh worktree
+            to provision its environment; ``None`` falls back to symlinking
+            the target repo's ``.venv``.
     """
 
     repo_path: Path
@@ -49,6 +53,7 @@ class Config:
     poll_interval: int
     worker_prompt: str
     theme: str
+    worktree_setup: str | None
 
 
 def load_config(path: Path) -> Config:
@@ -100,6 +105,11 @@ def _build_config(values: dict[str, Any]) -> Config:
     if "{issue}" not in worker_prompt:
         raise ConfigError("worker_prompt must contain the '{issue}' placeholder")
 
+    raw_setup = values["worktree_setup"]
+    worktree_setup = None if raw_setup is None else str(raw_setup)
+    if worktree_setup is not None and not worktree_setup.strip():
+        raise ConfigError("worktree_setup must not be empty")
+
     return Config(
         repo_path=repo_path,
         repo_slug=repo_slug,
@@ -109,6 +119,7 @@ def _build_config(values: dict[str, Any]) -> Config:
         poll_interval=_positive_int(values, "poll_interval"),
         worker_prompt=worker_prompt,
         theme=str(values["theme"]),
+        worktree_setup=worktree_setup,
     )
 
 

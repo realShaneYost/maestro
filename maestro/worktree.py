@@ -12,6 +12,7 @@ work. It never merges, rebases, or commits.
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -20,6 +21,11 @@ from pathlib import Path
 # A runner takes a git argument list and returns captured stdout. Injectable so
 # tests can substitute a fake; the default really runs git.
 GitRunner = Callable[[list[str]], str]
+
+# A setup runner runs a shell command in a worktree to provision its
+# environment. Injectable so tests can substitute a fake; the default really
+# runs the command.
+SetupRunner = Callable[[str, Path], None]
 
 
 class WorktreeError(RuntimeError):
@@ -37,6 +43,30 @@ def _run_git(args: list[str]) -> str:
     except subprocess.CalledProcessError as err:
         raise WorktreeError(f"git {' '.join(args)} failed: {err.stderr.strip()}") from err
     return result.stdout
+
+
+def _run_setup(command: str, cwd: Path) -> None:
+    """Run a worktree setup ``command`` in ``cwd`` through the shell.
+
+    Args:
+        command: A shell command line that provisions the worktree's
+            environment, typically by creating a virtualenv.
+        cwd: The worktree directory to run the command in.
+
+    Raises:
+        WorktreeError: If the command exits with a non-zero status.
+    """
+    try:
+        subprocess.run(
+            command,
+            shell=True,
+            cwd=str(cwd),
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as err:
+        raise WorktreeError(f"worktree setup command failed: {err.stderr.strip()}") from err
 
 
 @dataclass(frozen=True)
@@ -78,6 +108,9 @@ class WorktreeManager:
         repo_path: Path,
         worktrees_dir: Path,
         runner: GitRunner = _run_git,
+        *,
+        worktree_setup: str | None = None,
+        setup_runner: SetupRunner = _run_setup,
     ) -> None:
         """Initialise the manager.
 
@@ -85,24 +118,36 @@ class WorktreeManager:
             repo_path: Path to the target git repository.
             worktrees_dir: Directory under which per-issue worktrees are created.
             runner: Callable that runs git; injectable for tests.
+            worktree_setup: Optional shell command run inside each fresh
+                worktree to provision its environment. When ``None``, the
+                target repo's ``.venv`` is symlinked in as a fallback.
+            setup_runner: Callable that runs the ``worktree_setup`` command;
+                injectable for tests.
         """
         self._repo = repo_path
         self._worktrees_dir = worktrees_dir.resolve()
         self._run = runner
+        self._worktree_setup = worktree_setup
+        self._setup_runner = setup_runner
 
     def create(self, issue_number: int) -> Path:
         """Create a detached worktree off ``origin/main`` for ``issue_number``.
 
         Fetches ``origin`` first so the worktree is cut from current main. The
-        worktree starts detached; the worker creates its own branch inside it,
-        and the repo's ``.venv`` is symlinked in so quality-gate tools work.
-        The caller must ensure no worktree for this issue already exists.
+        worktree starts detached; the worker creates its own branch inside it.
+        Its environment is then provisioned so quality-gate tools work (see
+        :meth:`_provision_env`). The caller must ensure no worktree for this
+        issue already exists.
 
         Args:
             issue_number: The issue this worktree will host work for.
 
         Returns:
             The absolute path of the new worktree.
+
+        Raises:
+            WorktreeError: If a git operation or the ``worktree_setup``
+                command fails.
         """
         self._worktrees_dir.mkdir(parents=True, exist_ok=True)
         path = self._worktrees_dir / f"issue-{issue_number}"
@@ -118,14 +163,42 @@ class WorktreeManager:
                 "origin/main",
             ]
         )
-        self._link_venv(path)
+        self._provision_env(path)
         return path
+
+    def _provision_env(self, worktree: Path) -> None:
+        """Provision a fresh worktree so the worker's quality-gate tools work.
+
+        When a ``worktree_setup`` command is configured, it is run inside the
+        worktree — typically to build an isolated virtualenv. Otherwise the
+        target repo's ``.venv`` is symlinked in as a fallback.
+
+        A configured command that fails leaves nothing behind: the
+        half-prepared worktree is removed before the error propagates, so the
+        dispatch can be retried cleanly on a later poll.
+
+        Args:
+            worktree: The freshly created worktree directory.
+
+        Raises:
+            WorktreeError: If the ``worktree_setup`` command exits non-zero.
+        """
+        if self._worktree_setup is None:
+            self._link_venv(worktree)
+            return
+        try:
+            self._setup_runner(self._worktree_setup, worktree)
+        except WorktreeError:
+            with contextlib.suppress(WorktreeError):
+                self.remove(worktree)
+            raise
 
     def _link_venv(self, worktree: Path) -> None:
         """Symlink the target repo's ``.venv`` into ``worktree``.
 
-        A fresh worktree omits ``.venv`` (it is gitignored), so a worker would
-        have no quality-gate tools. The symlink restores them. Best-effort: if
+        The fallback used when no ``worktree_setup`` command is configured. A
+        fresh worktree omits ``.venv`` (it is gitignored), so a worker would
+        have no quality-gate tools; the symlink restores them. Best-effort: if
         the repo has no ``.venv``, nothing is linked.
         """
         source = self._repo / ".venv"

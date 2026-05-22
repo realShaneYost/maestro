@@ -16,7 +16,7 @@ maestro (the app)  ──poll──▶  GitHub Projects board
 
 1. **Poll** the Projects V2 board via `gh api graphql` — one query per interval. Workers never poll; only the app does.
 2. **Schedule** (pure code — see `core/scheduler.py`): an issue is dispatchable when its card is in the trigger column, the issue is open, it has no live worker, and every issue it is "Blocked by" is closed. When more issues are ready than `max_concurrent`, order by the Projects V2 Priority field.
-3. **Dispatch** up to `max_concurrent`: `git worktree add` a fresh worktree off `origin/main`, spawn the worker prompt (`/cc-work {issue}` by default) as a headless `claude` process, and capture its stdout to `logs/issue-N.log`.
+3. **Dispatch** up to `max_concurrent`: `git worktree add` a fresh worktree off `origin/main`, provision its environment (run the configured `worktree_setup` command, or symlink the repo's `.venv` as a fallback), spawn the worker prompt (`/cc-work {issue}` by default) as a headless `claude` process, and capture its stdout to `logs/issue-N.log`.
 4. **Track** in-flight workers; the set is reconstructable from `git worktree list`.
 5. On worker exit: append one line to `runs.jsonl`, then remove the worktree if the worker succeeded (keep it if it crashed, for debugging).
 

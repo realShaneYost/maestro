@@ -45,11 +45,16 @@ def _trigger(config: Config) -> StatusFieldTrigger:
     return StatusFieldTrigger(config.repo_slug, config.project_number, config.trigger_column)
 
 
+def _worktree_manager(config: Config) -> WorktreeManager:
+    """Build the worktree manager for the configured target repo."""
+    return WorktreeManager(config.repo_path, _WORKTREES_DIR, worktree_setup=config.worktree_setup)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     """Handle ``maestro run`` — the poll/dispatch loop."""
     config = load_config(Path(args.config))
     _setup_logging(Console(theme=load_theme(config.theme)))
-    worktrees = WorktreeManager(config.repo_path, _WORKTREES_DIR)
+    worktrees = _worktree_manager(config)
     Loop(config, _trigger(config), worktrees, _LOGS_DIR, _RUNS_LOG).run()
     return 0
 
@@ -86,7 +91,7 @@ def _cmd_once(args: argparse.Namespace) -> int:
         _print_dry_run(console, ready)
         return 0
     _setup_logging(console)
-    worktrees = WorktreeManager(config.repo_path, _WORKTREES_DIR)
+    worktrees = _worktree_manager(config)
     Loop(config, trigger, worktrees, _LOGS_DIR, _RUNS_LOG).tick()
     return 0
 
@@ -104,7 +109,7 @@ def _print_clean_report(console: Console, report: CleanReport) -> None:
 def _cmd_clean(args: argparse.Namespace) -> int:
     """Handle ``maestro clean`` — prune worktrees, branches, and optionally logs."""
     config = load_config(Path(args.config))
-    worktrees = WorktreeManager(config.repo_path, _WORKTREES_DIR)
+    worktrees = _worktree_manager(config)
     report = clean(
         worktrees,
         _LOGS_DIR,

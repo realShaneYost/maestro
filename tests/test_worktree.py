@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from maestro.worktree import WorktreeManager, _parse_worktree_list
+from maestro.worktree import WorktreeError, WorktreeManager, _parse_worktree_list
 
 
 def _git(cwd: Path, *args: str) -> None:
@@ -79,3 +79,31 @@ def test_list_managed_excludes_the_primary_worktree(repo, tmp_path):
     paths = [w.path for w in manager.list_managed()]
     assert repo not in paths
     assert len(paths) == 1
+
+
+def test_worktree_setup_runs_instead_of_the_symlink(repo, tmp_path):
+    (repo / ".venv").mkdir()
+    calls: list[tuple[str, Path]] = []
+    manager = WorktreeManager(
+        repo,
+        tmp_path / "worktrees",
+        worktree_setup="provision-env",
+        setup_runner=lambda command, cwd: calls.append((command, cwd)),
+    )
+    path = manager.create(5)
+    assert calls == [("provision-env", path)]
+    assert not (path / ".venv").exists()  # setup ran; the symlink was skipped
+
+
+def test_failed_worktree_setup_raises_and_removes_the_worktree(repo, tmp_path):
+    def boom(command: str, cwd: Path) -> None:
+        raise WorktreeError("setup blew up")
+
+    worktrees_dir = tmp_path / "worktrees"
+    manager = WorktreeManager(
+        repo, worktrees_dir, worktree_setup="provision-env", setup_runner=boom
+    )
+    with pytest.raises(WorktreeError, match="setup blew up"):
+        manager.create(9)
+    assert not (worktrees_dir / "issue-9").exists()
+    assert manager.list_managed() == []

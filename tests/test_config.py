@@ -32,6 +32,7 @@ def test_loads_minimal_config_and_applies_defaults(tmp_path):
     assert config.poll_interval == 60
     assert config.worker_prompt == "/cc-work {issue}"
     assert config.theme == "nord"
+    assert config.worktree_setup is None
 
 
 def test_missing_file_raises(tmp_path):
@@ -72,4 +73,16 @@ def test_non_positive_max_concurrent_raises(tmp_path):
 def test_worker_prompt_must_contain_issue_placeholder(tmp_path):
     body = _MINIMAL.format(repo=tmp_path) + 'worker_prompt: "/cc-work please"\n'
     with pytest.raises(ConfigError, match="placeholder"):
+        load_config(_write(tmp_path, body))
+
+
+def test_worktree_setup_is_loaded_when_set(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'worktree_setup: "uv venv .venv"\n'
+    config = load_config(_write(tmp_path, body))
+    assert config.worktree_setup == "uv venv .venv"
+
+
+def test_empty_worktree_setup_raises(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'worktree_setup: ""\n'
+    with pytest.raises(ConfigError, match="worktree_setup must not be empty"):
         load_config(_write(tmp_path, body))
