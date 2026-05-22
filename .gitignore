@@ -22,5 +22,8 @@ worktrees/
 runs.jsonl
 *.log
 
+# Per-session scratch — cc-session-save writes bookmarks under tmp/sessions/
+tmp/
+
 # macOS
 .DS_Store
