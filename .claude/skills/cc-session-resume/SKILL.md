@@ -43,4 +43,4 @@ Then **stop**. Wait for the operator. Do not auto-launch into the next step — 
 
 ## 4. If the bookmark seems stale
 
-If the bookmark is more than a week old, or `git status` shows substantial uncommitted changes that don't match what the bookmark describes, flag this in your response. The bookmark may not reflect the current state and re-reading docs (`CLAUDE.md`, `docs/architecture.md`, `docs/recovery.md`) may be more reliable.
+If the bookmark is more than a week old, or `git status` shows substantial uncommitted changes that don't match what the bookmark describes, flag this in your response. The bookmark may not reflect the current state and re-reading docs (`CLAUDE.md`, `docs/how-it-works.md`, `docs/usage.md`) may be more reliable.

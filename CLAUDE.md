@@ -12,7 +12,7 @@ Maestro is deliberately a plain program, not a long-running AI session. It was c
 
 **v1 build complete.** Built in vertical slices, each with tests; `black`,
 `ruff`, `mypy --strict`, and `pytest` all green. For a fresh setup, see
-`docs/runbook.md`.
+`docs/usage.md`.
 
 1. Foundation — config, core models, scheduler, CLI skeleton. *(done)*
 2. Worktree management + worker dispatch. *(done)*
@@ -32,7 +32,7 @@ Maestro is deliberately a plain program, not a long-running AI session. It was c
     so `maestro.yml` holds only board facts and is committed to the repo;
     runtime artifacts live in a sibling `../<repo>.maestro/` directory. *(done)*
 
-See `docs/architecture.md` for the full design.
+See `docs/how-it-works.md` for the full design.
 
 ## Tech Stack
 

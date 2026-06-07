@@ -38,7 +38,7 @@ cd /path/to/your-project
 cp /path/to/maestro/maestro.example.yml maestro.yml
 ```
 
-Edit `maestro.yml` — at minimum `repo_slug`, `project_number`, and `trigger_column`. There is no `repo_path`: Maestro infers it from the git root when run from inside the repo, so the file holds only board facts and is meant to be committed. See [`docs/github-setup.md`](docs/github-setup.md) for the board settings Maestro expects, and [`docs/runbook.md`](docs/runbook.md) for the full setup checklist.
+Edit `maestro.yml` — at minimum `repo_slug`, `project_number`, and `trigger_column`. There is no `repo_path`: Maestro infers it from the git root when run from inside the repo, so the file holds only board facts and is meant to be committed. See [`docs/usage.md`](docs/usage.md) for the board settings Maestro expects and the full setup checklist.
 
 ## Use
 
@@ -55,4 +55,4 @@ maestro once --dry-run      # one poll; explain each dispatch decision
 maestro clean               # prune finished worktrees and stale branches
 ```
 
-Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup is in [`docs/runbook.md`](docs/runbook.md). If something goes wrong, see [`docs/recovery.md`](docs/recovery.md).
+Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup and recovery are both in [`docs/usage.md`](docs/usage.md); the design is in [`docs/how-it-works.md`](docs/how-it-works.md).
