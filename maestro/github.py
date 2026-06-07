@@ -84,6 +84,24 @@ query($login: String!, $number: Int!) {
 }
 """
 
+# Just the Priority field's option list — paired with the Status query for
+# preflight checks (`maestro doctor`) and the board-bootstrap command
+# (`maestro setup`). Keeps `doctor` and `setup` off the trigger's private
+# attributes and out of the full board read.
+_PRIORITY_FIELD_QUERY = """
+query($login: String!, $number: Int!) {
+  repositoryOwner(login: $login) {
+    ... on ProjectV2Owner {
+      projectV2(number: $number) {
+        priorityField: field(name: "Priority") {
+          ... on ProjectV2SingleSelectField { options { name } }
+        }
+      }
+    }
+  }
+}
+"""
+
 # Open issues and their dependencies. NOTE: `first: 100` does not paginate; a
 # repository with more than 100 open issues would need cursor pagination.
 _OPEN_ISSUES_QUERY = """
@@ -171,19 +189,21 @@ def _parse_priority(value: object, rank: dict[str, int]) -> int | None:
     return rank.get(value)
 
 
-def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
-    """Extract the Status field's option names from the standalone query.
+def _parse_single_select_options(payload: dict[str, Any], field_alias: str) -> list[str] | None:
+    """Extract a single-select field's option names by GraphQL alias.
 
     Args:
-        payload: The decoded JSON from :data:`_STATUS_FIELD_QUERY`.
+        payload: The decoded JSON from the standalone field query.
+        field_alias: The alias used in the query (``"statusField"`` or
+            ``"priorityField"``).
 
     Returns:
-        The ordered option names, or ``None`` when the Status field does not
+        The ordered option names, or ``None`` when the named field does not
         exist on the project board.
     """
     try:
         owner = payload["data"]["repositoryOwner"]
-        field = owner["projectV2"].get("statusField") if isinstance(owner, dict) else None
+        field = owner["projectV2"].get(field_alias) if isinstance(owner, dict) else None
     except (KeyError, TypeError, AttributeError):
         return None
     if not isinstance(field, dict):
@@ -192,6 +212,16 @@ def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
     if not isinstance(options, list):
         return None
     return [option["name"] for option in options if isinstance(option, dict) and "name" in option]
+
+
+def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
+    """Extract the Status field's option names from the standalone query."""
+    return _parse_single_select_options(payload, "statusField")
+
+
+def _parse_priority_field_options(payload: dict[str, Any]) -> list[str] | None:
+    """Extract the Priority field's option names from the standalone query."""
+    return _parse_single_select_options(payload, "priorityField")
 
 
 def _parse_open_issues(payload: dict[str, Any]) -> tuple[set[int], dict[int, frozenset[int]]]:
@@ -348,13 +378,31 @@ class StatusFieldTrigger:
         Raises:
             GitHubError: If the gh call fails or returns invalid JSON.
         """
+        payload = self._run_field_query(_STATUS_FIELD_QUERY, "Status field response")
+        return _parse_status_field_options(payload)
+
+    def priority_field_options(self) -> list[str] | None:
+        """Return the Priority field's option names in declared order.
+
+        Used by ``maestro doctor`` and ``maestro setup`` to inspect the
+        Priority field without paying for a full board read. Returns ``None``
+        when the field does not exist on the board.
+
+        Raises:
+            GitHubError: If the gh call fails or returns invalid JSON.
+        """
+        payload = self._run_field_query(_PRIORITY_FIELD_QUERY, "Priority field response")
+        return _parse_priority_field_options(payload)
+
+    def _run_field_query(self, query: str, error_label: str) -> dict[str, Any]:
+        """Run a standalone field-introspection query through gh and decode it."""
         owner = self._repo_slug.split("/", 1)[0]
         raw = self._run(
             [
                 "api",
                 "graphql",
                 "-f",
-                f"query={_STATUS_FIELD_QUERY}",
+                f"query={query}",
                 "-f",
                 f"login={owner}",
                 "-F",
@@ -362,10 +410,10 @@ class StatusFieldTrigger:
             ]
         )
         try:
-            payload = json.loads(raw)
+            payload: dict[str, Any] = json.loads(raw)
         except json.JSONDecodeError as err:
-            raise GitHubError(f"Invalid Status field response: {raw!r}") from err
-        return _parse_status_field_options(payload)
+            raise GitHubError(f"Invalid {error_label}: {raw!r}") from err
+        return payload
 
     def _board_items(self) -> tuple[list[dict[str, Any]], dict[str, int]]:
         """Fetch the project board's item nodes and Priority rank map."""

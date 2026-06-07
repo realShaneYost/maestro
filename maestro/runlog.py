@@ -12,7 +12,9 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from maestro.core.models import RunRecord
+from maestro.core.models import Outcome, RunRecord
+
+_VALID_OUTCOMES: frozenset[Outcome] = frozenset({"done", "blocked", "failed"})
 
 
 def append_run(log_path: Path, record: RunRecord) -> None:
@@ -31,7 +33,9 @@ def read_runs(log_path: Path) -> list[RunRecord]:
     """Read every run record from the JSONL run log at ``log_path``.
 
     A missing log yields an empty list. Malformed lines are skipped, so a
-    partially written final line never breaks reading.
+    partially written final line never breaks reading. A record whose
+    ``outcome`` is not one of the documented :data:`Outcome` literals is
+    treated as malformed too — keeping the run log's typed contract honest.
 
     Args:
         log_path: Path to the ``runs.jsonl`` file.
@@ -48,11 +52,14 @@ def read_runs(log_path: Path) -> list[RunRecord]:
             continue
         try:
             data = json.loads(line)
+            outcome = data["outcome"]
+            if outcome not in _VALID_OUTCOMES:
+                continue
             record = RunRecord(
                 issue=data["issue"],
                 started=data["started"],
                 ended=data["ended"],
-                outcome=data["outcome"],
+                outcome=outcome,
                 pr_url=data.get("pr_url"),
             )
         except (json.JSONDecodeError, KeyError, TypeError):

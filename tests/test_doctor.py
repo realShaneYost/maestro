@@ -198,22 +198,14 @@ def test_priority_field_present_pass():
             }
         }
     )
-
-    def gh(args):
-        return 0, payload, ""
-
-    result = check_priority_field_present(_trigger(lambda _a: payload), gh)
+    result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.PASS
     assert "Critical" in result.message
 
 
 def test_priority_field_present_fail_when_missing():
     payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"priorityField": None}}}})
-
-    def gh(args):
-        return 0, payload, ""
-
-    result = check_priority_field_present(_trigger(lambda _a: payload), gh)
+    result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.FAIL
 
 
@@ -227,11 +219,7 @@ def test_priority_field_present_fail_when_no_options():
             }
         }
     )
-
-    def gh(args):
-        return 0, payload, ""
-
-    result = check_priority_field_present(_trigger(lambda _a: payload), gh)
+    result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.FAIL
     assert "no options" in result.message
 
@@ -303,10 +291,7 @@ def test_board_size_warns_near_cap():
     def trigger_runner(args):
         return board_payload if "projectV2" in " ".join(args) else deps
 
-    def gh(args):
-        return 0, "", ""
-
-    result = check_board_size(_trigger(trigger_runner), gh)
+    result = check_board_size(_trigger(trigger_runner))
     assert result is not None
     assert result.level is CheckLevel.WARN
     assert "100" in result.message
@@ -326,10 +311,7 @@ def test_board_size_returns_none_when_below_cap():
     def trigger_runner(args):
         return board_payload if "projectV2" in " ".join(args) else deps
 
-    def gh(args):
-        return 0, "", ""
-
-    assert check_board_size(_trigger(trigger_runner), gh) is None
+    assert check_board_size(_trigger(trigger_runner)) is None
 
 
 def _config(tmp_path: Path) -> Config:

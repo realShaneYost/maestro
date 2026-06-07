@@ -5,7 +5,7 @@ from __future__ import annotations
 from maestro.config import Config
 from maestro.core.models import BoardState, Issue
 from maestro.github import GitHubError
-from maestro.loop import Loop
+from maestro.loop import Loop, classify_outcome
 from maestro.runlog import read_runs
 from maestro.worktree import WorktreeError, WorktreeManager
 
@@ -42,6 +42,27 @@ class RaisingTrigger:
 
 def _fake_spawn(command, cwd, log_path):
     return FakeProcess()
+
+
+def test_classify_outcome_review_column_is_done():
+    statuses = {7: "In Review"}
+    assert classify_outcome(7, 0, statuses, {7}, "In Review", "Blocked") == "done"
+
+
+def test_classify_outcome_blocked_column_is_blocked_even_with_exit_zero():
+    statuses = {7: "Blocked"}
+    assert classify_outcome(7, 0, statuses, {7}, "In Review", "Blocked") == "blocked"
+
+
+def test_classify_outcome_still_in_trigger_is_failed_on_any_exit():
+    statuses = {7: "In Progress"}
+    assert classify_outcome(7, 0, statuses, {7}, "In Review", "Blocked") == "failed"
+    assert classify_outcome(7, 1, statuses, {7}, "In Review", "Blocked") == "failed"
+
+
+def test_classify_outcome_closed_issue_falls_back_to_exit_code():
+    assert classify_outcome(7, 0, {}, set(), "In Review", "Blocked") == "done"
+    assert classify_outcome(7, 1, {}, set(), "In Review", "Blocked") == "failed"
 
 
 def _issue(number: int, *, status_column: str | None = "In Progress") -> Issue:

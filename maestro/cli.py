@@ -21,7 +21,7 @@ from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.loop import Loop
 from maestro.setup import SetupReport, run_setup
-from maestro.status import render_recent, watch
+from maestro.status import print_board_section, print_board_unreachable, render_recent, watch
 from maestro.theme import ThemeError, load_theme
 from maestro.worktree import WorktreeError, WorktreeManager
 
@@ -67,22 +67,19 @@ def _cmd_status(args: argparse.Namespace) -> int:
     if args.watch:
         watch(console, _LOGS_DIR, config.repo_slug)
         return 0
-    board = None
-    board_error: str | None = None
     try:
         board = _trigger(config).poll()
     except GitHubError as err:
-        board_error = str(err)
-    render_recent(
-        console,
-        _LOGS_DIR,
-        config.repo_slug,
-        board,
-        board_error=board_error,
-        trigger_column=config.trigger_column,
-        blocked_column=config.blocked_column,
-        review_column=config.review_column,
-    )
+        print_board_unreachable(console, str(err))
+    else:
+        print_board_section(
+            console,
+            board,
+            config.trigger_column,
+            config.blocked_column,
+            config.review_column,
+        )
+    render_recent(console, _LOGS_DIR, config.repo_slug)
     return 0
 
 

@@ -162,15 +162,20 @@ def check_status_columns_present(
     return CheckResult("status columns", CheckLevel.PASS, "all configured columns present")
 
 
-def check_priority_field_present(trigger: StatusFieldTrigger, runner: GhRunner) -> CheckResult:
+def check_priority_field_present(trigger: StatusFieldTrigger) -> CheckResult:
     """Verify a Priority single-select field with at least one option exists.
 
-    The check reuses the board-poll path: an empty Priority rank map either
-    means the field is missing or has no options, both of which fail. The
-    raw rank is fetched through an extra board read so we can name the failure
-    accurately.
+    Args:
+        trigger: The board trigger used to introspect the Priority field.
+
+    Returns:
+        FAIL when the field is missing or has no options; PASS otherwise,
+        listing the options in their declared order.
     """
-    options = _fetch_priority_options(trigger, runner)
+    try:
+        options = trigger.priority_field_options()
+    except GitHubError as err:
+        return CheckResult("priority field", CheckLevel.FAIL, str(err))
     if options is None:
         return CheckResult("priority field", CheckLevel.FAIL, "Priority field not found on board")
     if not options:
@@ -178,56 +183,6 @@ def check_priority_field_present(trigger: StatusFieldTrigger, runner: GhRunner) 
     return CheckResult(
         "priority field", CheckLevel.PASS, f"{len(options)} option(s): {', '.join(options)}"
     )
-
-
-def _fetch_priority_options(trigger: StatusFieldTrigger, runner: GhRunner) -> list[str] | None:
-    """Read the Priority field's option list directly via a small GraphQL query."""
-    import json
-
-    from maestro.github import _parse_priority_rank_map
-
-    owner = trigger._repo_slug.split("/", 1)[0]  # NOTE(upgrade): use trigger's slug
-    query = """
-query($login: String!, $number: Int!) {
-  repositoryOwner(login: $login) {
-    ... on ProjectV2Owner {
-      projectV2(number: $number) {
-        priorityField: field(name: "Priority") {
-          ... on ProjectV2SingleSelectField { options { name } }
-        }
-      }
-    }
-  }
-}
-"""
-    code, stdout, stderr = runner(
-        [
-            "api",
-            "graphql",
-            "-f",
-            f"query={query}",
-            "-f",
-            f"login={owner}",
-            "-F",
-            f"number={trigger._project_number}",
-        ]
-    )
-    if code != 0:
-        return None
-    try:
-        payload = json.loads(stdout)
-    except json.JSONDecodeError:
-        return None
-    rank = _parse_priority_rank_map(payload)
-    if not rank:
-        try:
-            field = payload["data"]["repositoryOwner"]["projectV2"]["priorityField"]
-        except (KeyError, TypeError):
-            return None
-        if field is None:
-            return None
-        return []
-    return sorted(rank, key=rank.__getitem__)
 
 
 def check_worker_skill_present(repo_path: Path, worker_prompt: str) -> CheckResult:
@@ -280,7 +235,7 @@ def check_python_repo_needs_worktree_setup(
     )
 
 
-def check_board_size(trigger: StatusFieldTrigger, runner: GhRunner) -> CheckResult | None:
+def check_board_size(trigger: StatusFieldTrigger) -> CheckResult | None:
     """WARN when the board or the open-issues list reaches the 100-item cap.
 
     Returns ``None`` when both sit comfortably below the cap — there is no
@@ -325,18 +280,11 @@ def run_checks(
         One :class:`CheckResult` per check, in the order they ran.
     """
     if trigger is None:
-
-        def trigger_runner(args: list[str]) -> str:
-            code, stdout, stderr = gh_runner(args)
-            if code != 0:
-                raise GitHubError(f"gh {' '.join(args)} failed: {stderr.strip()}")
-            return stdout
-
         trigger = StatusFieldTrigger(
             config.repo_slug,
             config.project_number,
             config.trigger_column,
-            runner=trigger_runner,
+            runner=_adapt_runner(gh_runner),
         )
 
     results: list[CheckResult] = []
@@ -349,12 +297,30 @@ def run_checks(
             trigger, config.trigger_column, config.review_column, config.blocked_column
         )
     )
-    results.append(check_priority_field_present(trigger, gh_runner))
+    results.append(check_priority_field_present(trigger))
     results.append(check_worker_skill_present(config.repo_path, config.worker_prompt))
     py = check_python_repo_needs_worktree_setup(config.repo_path, config.worktree_setup)
     if py is not None:
         results.append(py)
-    size = check_board_size(trigger, gh_runner)
+    size = check_board_size(trigger)
     if size is not None:
         results.append(size)
     return results
+
+
+def _adapt_runner(gh_runner: GhRunner) -> Callable[[list[str]], str]:
+    """Adapt a ``(rc, stdout, stderr)`` gh runner to the trigger's stdout-only API.
+
+    The trigger contract expects a runner that returns stdout and raises
+    :class:`GitHubError` on non-zero exit. ``maestro doctor`` wants the
+    richer tuple so it can surface stderr and the exit code in its own
+    output, so a small adapter bridges the two shapes.
+    """
+
+    def runner(args: list[str]) -> str:
+        code, stdout, stderr = gh_runner(args)
+        if code != 0:
+            raise GitHubError(f"gh {' '.join(args)} failed: {stderr.strip()}")
+        return stdout
+
+    return runner

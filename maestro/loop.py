@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from maestro.config import Config
-from maestro.core.models import BoardState, RunRecord
+from maestro.core.models import BoardState, Outcome, RunRecord
 from maestro.core.scheduler import dispatchable_issues
 from maestro.core.trigger import TriggerSource
 from maestro.dispatch import build_worker_command, spawn_worker
@@ -57,6 +57,43 @@ class _RunningWorker:
 def _utc_now() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(UTC).isoformat()
+
+
+def classify_outcome(
+    issue: int,
+    exit_code: int,
+    status_by_issue: dict[int, str | None],
+    open_numbers: set[int],
+    review_column: str,
+    blocked_column: str,
+) -> Outcome:
+    """Classify a finished worker's run as ``done``, ``blocked``, or ``failed``.
+
+    The card's current column is the semantic outcome; the exit code is
+    only consulted as a tie-breaker for closed-and-removed issues that no
+    longer appear on the board at all.
+
+    Args:
+        issue: The issue number being classified.
+        exit_code: The worker process's exit code.
+        status_by_issue: Map from issue number to Status-field value (or
+            ``None`` when the field is unset or the issue is missing from
+            the board entirely).
+        open_numbers: Issue numbers still open on the repository.
+        review_column: Configured ``review_column`` from the config.
+        blocked_column: Configured ``blocked_column`` from the config.
+
+    Returns:
+        The classification this run resolves to.
+    """
+    column = status_by_issue.get(issue)
+    if column == review_column:
+        return "done"
+    if column == blocked_column:
+        return "blocked"
+    if issue not in open_numbers:
+        return "done" if exit_code == 0 else "failed"
+    return "failed"
 
 
 class Loop:
@@ -176,7 +213,14 @@ class Loop:
             code = worker.process.poll()
             if code is None:
                 continue
-            outcome = self._classify(issue, code, status_by_issue, board.open_numbers)
+            outcome = classify_outcome(
+                issue,
+                code,
+                status_by_issue,
+                board.open_numbers,
+                self._config.review_column,
+                self._config.blocked_column,
+            )
             column = status_by_issue.get(issue)
             append_run(
                 self._runs_log,
@@ -206,28 +250,6 @@ class Loop:
                 outcome,
                 column,
             )
-
-    def _classify(
-        self,
-        issue: int,
-        code: int,
-        status_by_issue: dict[int, str | None],
-        open_numbers: set[int],
-    ) -> str:
-        """Classify a finished worker's run as ``done``, ``blocked``, or ``failed``.
-
-        The card's current column is the semantic outcome; the exit code is
-        only consulted as a tie-breaker for closed-and-removed issues that no
-        longer appear on the board at all.
-        """
-        column = status_by_issue.get(issue)
-        if column == self._config.review_column:
-            return "done"
-        if column == self._config.blocked_column:
-            return "blocked"
-        if issue not in open_numbers:
-            return "done" if code == 0 else "failed"
-        return "failed"
 
     def _remove_worktree(self, worktree: Path) -> None:
         """Remove a finished worker's worktree, tolerating failure."""

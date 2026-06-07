@@ -259,45 +259,38 @@ def render_board_summary(
     return lines
 
 
-def render_recent(
+def print_board_section(
     console: Console,
-    logs_dir: Path,
-    repo_slug: str,
-    board: BoardState | None = None,
-    *,
-    board_error: str | None = None,
-    trigger_column: str | None = None,
-    blocked_column: str | None = None,
-    review_column: str | None = None,
+    board: BoardState,
+    trigger_column: str,
+    blocked_column: str,
+    review_column: str,
 ) -> None:
-    """Print a one-shot snapshot — board summary first, then recent activity.
+    """Print the board summary section to ``console``.
 
-    Args:
-        console: Themed console to print to.
-        logs_dir: Directory holding the per-issue log files.
-        repo_slug: GitHub ``owner/name`` slug used to fetch issue titles.
-        board: Polled board state, or ``None`` when the poll failed.
-        board_error: Message to print under "Board unreachable:" when ``board``
-            is ``None``. Ignored if ``board`` is set.
-        trigger_column: Configured trigger-column name (required when ``board``
-            is provided).
-        blocked_column: Configured blocked-column name.
-        review_column: Configured review-column name.
+    Renders :func:`render_board_summary` under a "Board:" header, followed by
+    a trailing blank line. An empty result prints a short "no issues" header
+    instead of nothing — silent absence is harder to debug than an explicit
+    message.
     """
-    if board is not None and trigger_column and blocked_column and review_column:
-        summary = render_board_summary(board, trigger_column, blocked_column, review_column)
-        if summary:
-            console.print("Board:", style="header")
-            for summary_line in summary:
-                console.print(summary_line)
-            console.print()
-        else:
-            console.print("Board: (no issues with a Status value)", style="header")
-            console.print()
-    elif board_error is not None:
-        console.print(f"Board unreachable: {board_error}", style="error")
-        console.print()
+    summary = render_board_summary(board, trigger_column, blocked_column, review_column)
+    if summary:
+        console.print("Board:", style="header")
+        for line in summary:
+            console.print(line)
+    else:
+        console.print("Board: (no issues with a Status value)", style="header")
+    console.print()
 
+
+def print_board_unreachable(console: Console, error: str) -> None:
+    """Print a board-unreachable banner with the gh error message."""
+    console.print(f"Board unreachable: {error}", style="error")
+    console.print()
+
+
+def render_recent(console: Console, logs_dir: Path, repo_slug: str) -> None:
+    """Print a one-shot snapshot of recent worker activity."""
     lines = recent_lines(logs_dir)
     if not lines:
         console.print("No worker activity.")

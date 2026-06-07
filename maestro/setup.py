@@ -19,7 +19,6 @@ from maestro.config import Config
 from maestro.doctor import (
     CheckLevel,
     GhRunner,
-    _fetch_priority_options,
     _run_gh,
     check_gh_auth,
     check_gh_project_scope,
@@ -90,7 +89,11 @@ def run_setup(config: Config, *, gh_runner: GhRunner = _run_gh) -> SetupReport:
 
     trigger = _build_trigger(config, gh_runner)
 
-    existing = _fetch_priority_options(trigger, gh_runner)
+    try:
+        existing = trigger.priority_field_options()
+    except GitHubError as err:
+        report.aborted = f"failed to read Priority field: {err}"
+        return report
     if existing is None:
         owner = config.repo_slug.split("/", 1)[0]
         code, _stdout, stderr = gh_runner(

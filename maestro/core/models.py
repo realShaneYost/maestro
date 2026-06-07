@@ -9,6 +9,15 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass
+from typing import Literal
+
+Outcome = Literal["done", "blocked", "failed"]
+"""Terminal classification of a finished worker run.
+
+``done``: the worker parked its card in the review column.
+``blocked``: the worker parked its card in the blocked column.
+``failed``: the worker did neither — a contract violation or crash.
+"""
 
 
 class WorkerState(enum.Enum):
@@ -56,14 +65,14 @@ class RunRecord:
         issue: The issue number the worker handled.
         started: ISO-8601 timestamp of when the worker was spawned.
         ended: ISO-8601 timestamp of when the worker exited.
-        outcome: Terminal state — one of ``done``, ``failed``, ``blocked``.
+        outcome: Terminal state — see :data:`Outcome`.
         pr_url: URL of the PR the worker opened, or ``None`` if it opened none.
     """
 
     issue: int
     started: str
     ended: str
-    outcome: str
+    outcome: Outcome
     pr_url: str | None
 
 
