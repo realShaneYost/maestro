@@ -17,6 +17,7 @@ htmlcov/
 
 # Maestro runtime artifacts (the live config holds local paths; example is committed)
 maestro.yml
+astromech.yml
 logs/
 worktrees/
 runs.jsonl

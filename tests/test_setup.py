@@ -25,42 +25,30 @@ def _config(tmp_path: Path) -> Config:
     )
 
 
-def _status_payload(columns: list[str]) -> str:
-    return json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {"statusField": {"options": [{"name": name} for name in columns]}}
-                }
-            }
-        }
-    )
-
-
-def _priority_payload(options: list[str] | None) -> str:
-    field_value: dict[str, object] | None = (
-        None if options is None else {"options": [{"name": name} for name in options]}
-    )
-    return json.dumps({"data": {"repositoryOwner": {"projectV2": {"priorityField": field_value}}}})
+def _fields_payload(status: list[str], priority_options: list[str] | None) -> str:
+    """Render the fields-enumeration response that both lookups now share."""
+    nodes: list[dict[str, object]] = []
+    if status:
+        nodes.append({"name": "Status", "options": [{"name": name} for name in status]})
+    if priority_options is not None:
+        nodes.append({"name": "Priority", "options": [{"name": name} for name in priority_options]})
+    return json.dumps({"data": {"repositoryOwner": {"projectV2": {"fields": {"nodes": nodes}}}}})
 
 
 def _make_runner(*, status: list[str], priority_options: list[str] | None):
     """Build a gh runner whose responses depend on the request shape."""
     created: list[list[str]] = []
-    state = {"priority_options": priority_options}
+    state: dict[str, list[str] | None] = {"priority_options": priority_options}
 
     def run(args: list[str]) -> tuple[int, str, str]:
-        joined = " ".join(args)
         if args[:2] == ["auth", "status"]:
             return 0, "Token scopes: 'repo', 'project'\n", ""
         if args[:2] == ["project", "field-create"]:
             created.append(list(args))
             state["priority_options"] = ["Critical", "High", "Normal", "Low"]
             return 0, "created\n", ""
-        if "statusField" in joined:
-            return 0, _status_payload(status), ""
-        if "priorityField" in joined:
-            return 0, _priority_payload(state["priority_options"]), ""
+        if args[:2] == ["api", "graphql"]:
+            return 0, _fields_payload(status, state["priority_options"]), ""
         return 0, "", ""
 
     return run, created

@@ -108,13 +108,20 @@ def test_parse_status_field_options_returns_ordered_names():
         "data": {
             "repositoryOwner": {
                 "projectV2": {
-                    "statusField": {
-                        "options": [
-                            {"name": "Backlog"},
-                            {"name": "In Progress"},
-                            {"name": "In Review"},
-                            {"name": "Blocked"},
-                            {"name": "Done"},
+                    "fields": {
+                        "nodes": [
+                            {},  # a non-single-select field contributes no name
+                            {"name": "Priority", "options": [{"name": "High"}]},
+                            {
+                                "name": "Status",
+                                "options": [
+                                    {"name": "Backlog"},
+                                    {"name": "In Progress"},
+                                    {"name": "In Review"},
+                                    {"name": "Blocked"},
+                                    {"name": "Done"},
+                                ],
+                            },
                         ]
                     }
                 }
@@ -131,7 +138,13 @@ def test_parse_status_field_options_returns_ordered_names():
 
 
 def test_parse_status_field_options_missing_field_returns_none():
-    payload = {"data": {"repositoryOwner": {"projectV2": {"statusField": None}}}}
+    payload = {
+        "data": {
+            "repositoryOwner": {
+                "projectV2": {"fields": {"nodes": [{"name": "Priority", "options": []}]}}
+            }
+        }
+    }
     assert _parse_status_field_options(payload) is None
 
 
@@ -326,11 +339,16 @@ def test_status_field_options_fetches_field():
             "data": {
                 "repositoryOwner": {
                     "projectV2": {
-                        "statusField": {
-                            "options": [
-                                {"name": "Backlog"},
-                                {"name": "In Progress"},
-                                {"name": "Done"},
+                        "fields": {
+                            "nodes": [
+                                {
+                                    "name": "Status",
+                                    "options": [
+                                        {"name": "Backlog"},
+                                        {"name": "In Progress"},
+                                        {"name": "Done"},
+                                    ],
+                                }
                             ]
                         }
                     }
@@ -343,6 +361,6 @@ def test_status_field_options_fetches_field():
 
 
 def test_status_field_options_missing_field_returns_none():
-    payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"statusField": None}}}})
+    payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"fields": {"nodes": []}}}}})
     trigger = StatusFieldTrigger("owner/repo", 1, "In Progress", runner=lambda _args: payload)
     assert trigger.status_field_options() is None
