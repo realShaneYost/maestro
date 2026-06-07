@@ -21,23 +21,31 @@ Watches a GitHub Projects board and dispatches coding agents to work issues auto
 
 ## Install
 
+Maestro is a standalone tool — install it once, then run it from inside any repo you want it to drive. Use [`pipx`](https://pipx.pypa.io/) (or [`uv tool`](https://docs.astral.sh/uv/)) so it lives in its own isolated environment and never pollutes a project's dependencies:
+
 ```
-git clone <this-repo> && cd maestro
-python3 -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pipx install git+https://github.com/realShaneYost/maestro
+# or, for local development from a clone:
+git clone <this-repo> && cd maestro && uv tool install .
 ```
 
 ## Configure
 
+Each driven repo carries its own config at its root. Copy the template in:
+
 ```
-cp maestro.example.yml maestro.yml
+cd /path/to/your-project
+cp /path/to/maestro/maestro.example.yml maestro.yml
 ```
 
-Edit `maestro.yml` — at minimum `repo_path`, `repo_slug`, `project_number`, and `trigger_column`. See [`docs/github-setup.md`](docs/github-setup.md) for the GitHub board settings Maestro expects.
+Edit `maestro.yml` — at minimum `repo_slug`, `project_number`, and `trigger_column`. There is no `repo_path`: Maestro infers it from the git root when run from inside the repo, so the file holds only board facts and is meant to be committed. See [`docs/github-setup.md`](docs/github-setup.md) for the board settings Maestro expects, and [`docs/runbook.md`](docs/runbook.md) for the full setup checklist.
 
 ## Use
 
+Run every command **from inside the driven repo** — Maestro reads `./maestro.yml` and infers the repo from the git root:
+
 ```
+cd /path/to/your-project
 maestro setup               # bootstrap the board's Priority field (idempotent)
 maestro doctor              # read-only preflight checks
 maestro run                 # start the poll/dispatch loop
@@ -47,4 +55,4 @@ maestro once --dry-run      # one poll; explain each dispatch decision
 maestro clean               # prune finished worktrees and stale branches
 ```
 
-Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup is in [`docs/runbook.md`](docs/runbook.md). If something goes wrong, see [`docs/recovery.md`](docs/recovery.md).
+Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup is in [`docs/runbook.md`](docs/runbook.md). If something goes wrong, see [`docs/recovery.md`](docs/recovery.md).

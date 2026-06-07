@@ -4,6 +4,15 @@
 
 A standalone Python program that watches a GitHub Projects V2 board and dispatches autonomous coding agents to work issues. It is an orchestrator, not an AI session — it survives terminal restarts, holds no conversation context, and can be reasoned about like any other daemon-shaped tool.
 
+## Deployment model
+
+Maestro is installed once (via `pipx` / `uv tool`, in its own isolated environment) and run from **inside** each repository it drives. There is no central install that points at remote repos. Running from inside the repo means:
+
+- the driven repo is the current git root, which Maestro infers as `repo_path` — so `maestro.yml` carries only board facts (no machine-specific paths) and is committed to the repo;
+- runtime artifacts (worktrees, per-issue logs, `runs.jsonl`) are written to a **sibling** directory, `../<repo>.maestro/`, keeping them out of the repo's working tree and out of any worktree.
+
+One Maestro install can drive many repos; each is just a different directory you run it from, with its own committed config.
+
 ```
 maestro (the app)  ──poll──▶  GitHub Projects board
        │
@@ -16,13 +25,13 @@ maestro (the app)  ──poll──▶  GitHub Projects board
 
 1. **Poll** the Projects V2 board via `gh api graphql` — one query per interval. Workers never poll; only the app does.
 2. **Schedule** (pure code — see `core/scheduler.py`): an issue is dispatchable when its card is in the trigger column, the issue is open, it has no live worker, and every issue it is "Blocked by" is closed. When more issues are ready than `max_concurrent`, order by the Projects V2 Priority field.
-3. **Dispatch** up to `max_concurrent`: `git worktree add` a fresh worktree off `origin/main`, provision its environment (run the configured `worktree_setup` command, or symlink the repo's `.venv` as a fallback), spawn the worker prompt (`/cc-work {issue}` by default) as a headless `claude` process, and capture its stdout to `logs/issue-N.log`.
+3. **Dispatch** up to `max_concurrent`: `git worktree add` a fresh worktree off `origin/main` (under `../<repo>.maestro/worktrees/`), provision its environment (run the configured `worktree_setup` command, or symlink the repo's `.venv` as a fallback), spawn the worker prompt (`/cc-work {issue}` by default) as a headless `claude` process, and capture its stdout to `../<repo>.maestro/logs/issue-N.log`.
 4. **Track** in-flight workers; the set is reconstructable from `git worktree list`.
-5. On worker exit: append one line to `runs.jsonl`, then remove the worktree if the worker succeeded (keep it if it crashed, for debugging).
+5. On worker exit: append one line to the run log (`../<repo>.maestro/runs.jsonl`), then remove the worktree if the worker succeeded (keep it if it crashed, for debugging).
 
 ## Components
 
-- `config.py` — loads and validates `maestro.yml`.
+- `config.py` — loads and validates `maestro.yml`, and derives the sibling runtime-artifact paths (`runtime_paths`).
 - `core/models.py` — the shared vocabulary: `Issue`, `WorkerState`, `RunRecord`.
 - `core/scheduler.py` — the pure dispatch-decision function.
 - `cli.py` — argument parsing and subcommand dispatch.
@@ -38,7 +47,7 @@ Workers are stateless; all durable state lives in GitHub. A worker opens its PR,
 2. `core/` never does screen I/O — the CLI and any future TUI are thin renderers.
 3. The scheduler is pure, deterministic code — no language model.
 4. Workers are stateless and isolated from one another.
-5. Logs and `runs.jsonl` live outside worktrees and persist as the audit trail.
+5. Logs and `runs.jsonl` live outside worktrees — in the sibling `../<repo>.maestro/` directory — and persist as the audit trail.
 6. `status --watch` is read-only.
 
 ## Known limitations

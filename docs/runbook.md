@@ -1,6 +1,16 @@
 # Maestro operator runbook
 
-The linear setup checklist for a fresh Maestro install pointed at a fresh repository. Each step is copy-pasteable top to bottom. After the last step, `maestro run` is safe to start.
+The linear setup checklist for driving a fresh repository with Maestro. Each step is copy-pasteable top to bottom. After the last step, `maestro run` is safe to start.
+
+Maestro is installed once and run from inside each repo it drives. Every command below is run **from the root of the driven repo** — Maestro reads `./maestro.yml` and infers the repo from the git root.
+
+## 0. Install Maestro (once per machine)
+
+```
+pipx install git+https://github.com/realShaneYost/maestro
+```
+
+`pipx` (or `uv tool install`) keeps Maestro in its own isolated environment so it never becomes a dependency of the repos it drives. Then `cd` into the repo you want to drive — the rest of the steps run there.
 
 ## 1. Authenticate `gh` with the `project` scope
 
@@ -11,20 +21,19 @@ gh auth refresh -s project
 
 Maestro never stores credentials — it shells out to `gh` and trusts whatever `gh auth status` reports. The `project` scope is required to read and (during `maestro setup`) create Projects V2 fields.
 
-## 2. Write `maestro.yml`
+## 2. Write `maestro.yml` at the repo root
 
-Copy the template and fill it in:
+Copy the template into the driven repo and fill it in. It is meant to be committed — it holds only board facts, no machine-specific paths:
 
 ```
-cp maestro.example.yml maestro.yml
+cp /path/to/maestro/maestro.example.yml maestro.yml
 ```
 
-Every key:
+There is **no `repo_path`** — Maestro infers it from the git root when you run it from inside the repo. Every key:
 
 | Key | Default | What it does |
 |---|---|---|
-| `repo_path` | required | Absolute path to the driven git repository. |
-| `repo_slug` | required | GitHub `owner/name` slug for that repository. |
+| `repo_slug` | required | GitHub `owner/name` slug for this repository. |
 | `project_number` | required | The Projects V2 board number. |
 | `trigger_column` | required | Status-field value that means "dispatch this issue". |
 | `review_column` | `"In Review"` | Status-field value the worker parks the card in after opening its PR. **Reaching this column is how Maestro classifies a run as `done`.** |
@@ -36,6 +45,8 @@ Every key:
 | `worktree_setup` | `null` | Shell command run inside each fresh worktree to provision its environment. **Set this for any Python project whose workers change package code** — see [`github-setup.md`](github-setup.md). |
 
 `trigger_column`, `review_column`, and `blocked_column` must be three **distinct** values; Maestro rejects the config otherwise.
+
+Runtime artifacts — worktrees, per-issue logs, and `runs.jsonl` — are written to a **sibling** directory, `../<repo>.maestro/`, so they never appear in the repo's working tree and you have nothing extra to gitignore.
 
 ## 3. Bootstrap the board
 
@@ -67,7 +78,7 @@ The reference column layout is `Backlog`, `In Progress`, `In Review`, `Blocked`,
 In the driven repository, install the skill the orchestrator will invoke. For Claude Code:
 
 ```
-<repo_path>/.claude/skills/<name>/SKILL.md
+.claude/skills/<name>/SKILL.md
 ```
 
 where `<name>` is the first token after the leading `/` in `worker_prompt` (default `cc-work`). [`templates/worker-skill.md`](../templates/worker-skill.md) is the contract; copy it across and adapt the quality-gate command list and column names to the driven repo.

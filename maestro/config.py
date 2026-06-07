@@ -11,7 +11,10 @@ import yaml
 
 _SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
-_REQUIRED_KEYS = ("repo_path", "repo_slug", "project_number", "trigger_column")
+# repo_path is not a config key: Maestro is run from inside the driven repo and
+# infers it from the git root, which keeps maestro.yml free of machine-specific
+# paths so it can be committed to the driven repo.
+_REQUIRED_KEYS = ("repo_slug", "project_number", "trigger_column")
 
 _DEFAULTS: dict[str, Any] = {
     "max_concurrent": 2,
@@ -66,11 +69,14 @@ class Config:
     blocked_column: str
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path, *, repo_path: Path) -> Config:
     """Load and validate Maestro config from ``path``.
 
     Args:
         path: Path to a ``maestro.yml`` file.
+        repo_path: Absolute path to the driven git repository, supplied by the
+            caller (the CLI infers it from the git root). Any ``repo_path`` key
+            in the file is ignored in its favour.
 
     Returns:
         A fully validated :class:`Config`.
@@ -94,7 +100,7 @@ def load_config(path: Path) -> Config:
     if missing:
         raise ConfigError(f"Config is missing required key(s): {', '.join(missing)}")
 
-    return _build_config({**_DEFAULTS, **raw})
+    return _build_config({**_DEFAULTS, **raw, "repo_path": str(repo_path)})
 
 
 def _build_config(values: dict[str, Any]) -> Config:
@@ -161,3 +167,42 @@ def _positive_int(values: dict[str, Any], key: str) -> int:
     if raw <= 0:
         raise ConfigError(f"{key} must be a positive integer: {raw}")
     return raw
+
+
+@dataclass(frozen=True)
+class RuntimePaths:
+    """Filesystem locations for a driven repo's Maestro runtime artifacts.
+
+    Everything lives in a sibling directory next to the driven repo
+    (``<repo>.maestro/``), so worktrees, logs, and the run log never pollute
+    the repo's working tree and a worktree is never nested inside it.
+
+    Attributes:
+        root: The sibling runtime directory itself.
+        worktrees_dir: Directory under which per-issue worktrees are created.
+        logs_dir: Directory for per-issue worker logs.
+        runs_log: Path to the append-only run log.
+    """
+
+    root: Path
+    worktrees_dir: Path
+    logs_dir: Path
+    runs_log: Path
+
+
+def runtime_paths(repo_path: Path) -> RuntimePaths:
+    """Derive the runtime-artifact paths for a driven repo.
+
+    Args:
+        repo_path: Absolute path to the driven git repository.
+
+    Returns:
+        Paths rooted at ``<repo>.maestro/`` — a sibling of the repo.
+    """
+    root = repo_path.parent / f"{repo_path.name}.maestro"
+    return RuntimePaths(
+        root=root,
+        worktrees_dir=root / "worktrees",
+        logs_dir=root / "logs",
+        runs_log=root / "runs.jsonl",
+    )
