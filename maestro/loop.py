@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from maestro.config import Config
-from maestro.core.models import RunRecord
+from maestro.core.models import BoardState, RunRecord
 from maestro.core.scheduler import dispatchable_issues
 from maestro.core.trigger import TriggerSource
 from maestro.dispatch import build_worker_command, spawn_worker
@@ -101,20 +101,23 @@ class Loop:
         self._recently_dispatched: set[int] = set()
 
     def tick(self) -> None:
-        """Run one cycle: reap finished workers, then poll and dispatch.
+        """Run one cycle: poll, then reap and dispatch against that board.
 
-        Issues whose worker has finished but whose card is still in the
-        trigger column are held in :attr:`_recently_dispatched` and counted
-        as in-flight, so they are not immediately re-dispatched. The guard
-        releases as soon as the card is observed outside the trigger column
-        or the issue closes.
+        The board is polled first so the reap step can classify finished
+        workers by the column their card now sits in (``review_column`` →
+        ``done``, ``blocked_column`` → ``blocked``, anywhere else →
+        ``failed``). Issues whose worker has finished but whose card is still
+        in the trigger column are held in :attr:`_recently_dispatched` and
+        counted as in-flight, so they are not immediately re-dispatched. The
+        guard releases as soon as the card is observed outside the trigger
+        column or the issue closes.
         """
-        self._reap()
         board = self._trigger.poll()
         in_trigger = {issue.number for issue in board.issues if issue.in_trigger_column}
         self._recently_dispatched = {
             n for n in self._recently_dispatched if n in in_trigger and n in board.open_numbers
         }
+        self._reap(board)
         in_flight = set(self._workers) | self._recently_dispatched
         ready = dispatchable_issues(
             board.issues, board.open_numbers, in_flight, self._config.max_concurrent
@@ -157,13 +160,24 @@ class Loop:
         )
         logger.info("Dispatched worker for issue #%d", issue)
 
-    def _reap(self) -> None:
-        """Record and clear every worker whose process has exited."""
+    def _reap(self, board: BoardState) -> None:
+        """Record and clear every worker whose process has exited.
+
+        The freshly polled ``board`` is the source of truth for the run's
+        outcome: the column the card now sits in classifies the run, not the
+        exit code. A worker that exits without parking its card — even with
+        exit code 0 — is a contract violation and is recorded as ``failed``.
+
+        Args:
+            board: The board state from this tick's poll.
+        """
+        status_by_issue = {issue.number: issue.status_column for issue in board.issues}
         for issue, worker in list(self._workers.items()):
             code = worker.process.poll()
             if code is None:
                 continue
-            outcome = "done" if code == 0 else "failed"
+            outcome = self._classify(issue, code, status_by_issue, board.open_numbers)
+            column = status_by_issue.get(issue)
             append_run(
                 self._runs_log,
                 RunRecord(
@@ -174,18 +188,46 @@ class Loop:
                     pr_url=None,
                 ),
             )
-            if outcome == "done":
+            if outcome in {"done", "blocked"}:
                 self._remove_worktree(worker.worktree)
             else:
                 logger.warning(
-                    "Worker for issue #%d failed (exit %d); worktree kept at %s",
+                    "Worker for issue #%d failed (exit %d, column %r); worktree kept at %s",
                     issue,
                     code,
+                    column,
                     worker.worktree,
                 )
             del self._workers[issue]
             self._recently_dispatched.add(issue)
-            logger.info("Reaped worker for issue #%d (%s)", issue, outcome)
+            logger.info(
+                "Reaped worker for issue #%d (%s, column %r)",
+                issue,
+                outcome,
+                column,
+            )
+
+    def _classify(
+        self,
+        issue: int,
+        code: int,
+        status_by_issue: dict[int, str | None],
+        open_numbers: set[int],
+    ) -> str:
+        """Classify a finished worker's run as ``done``, ``blocked``, or ``failed``.
+
+        The card's current column is the semantic outcome; the exit code is
+        only consulted as a tie-breaker for closed-and-removed issues that no
+        longer appear on the board at all.
+        """
+        column = status_by_issue.get(issue)
+        if column == self._config.review_column:
+            return "done"
+        if column == self._config.blocked_column:
+            return "blocked"
+        if issue not in open_numbers:
+            return "done" if code == 0 else "failed"
+        return "failed"
 
     def _remove_worktree(self, worktree: Path) -> None:
         """Remove a finished worker's worktree, tolerating failure."""

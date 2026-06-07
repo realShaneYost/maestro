@@ -107,3 +107,18 @@ def test_failed_worktree_setup_raises_and_removes_the_worktree(repo, tmp_path):
         manager.create(9)
     assert not (worktrees_dir / "issue-9").exists()
     assert manager.list_managed() == []
+
+
+def test_create_discards_stale_worktree_at_target_path(repo, tmp_path, caplog):
+    """A leftover worktree from a previous failed run is discarded and re-created."""
+    manager = WorktreeManager(repo, tmp_path / "worktrees")
+    first = manager.create(42)
+    # Touch a file inside the stale worktree so we can verify it was discarded.
+    sentinel = first / "stale-marker.txt"
+    sentinel.write_text("leftover", encoding="utf-8")
+    with caplog.at_level("WARNING", logger="maestro.worktree"):
+        second = manager.create(42)
+    assert second == first
+    assert not sentinel.exists()
+    assert any("stale" in record.message.lower() for record in caplog.records)
+    assert manager.list_managed() == [wt for wt in manager.list_managed() if wt.path == second]

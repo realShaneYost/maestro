@@ -19,6 +19,8 @@ _DEFAULTS: dict[str, Any] = {
     "worker_prompt": "/cc-work {issue}",
     "theme": "nord",
     "worktree_setup": None,
+    "review_column": "In Review",
+    "blocked_column": "Blocked",
 }
 
 
@@ -43,6 +45,12 @@ class Config:
         worktree_setup: Optional shell command run inside each fresh worktree
             to provision its environment; ``None`` falls back to symlinking
             the target repo's ``.venv``.
+        review_column: Status-field value a worker parks its card in when it
+            opens its PR. Reaching this column is how Maestro classifies a
+            run as ``done``.
+        blocked_column: Status-field value a worker parks its card in when it
+            cannot proceed. Reaching this column is how Maestro classifies a
+            run as ``blocked``.
     """
 
     repo_path: Path
@@ -54,6 +62,8 @@ class Config:
     worker_prompt: str
     theme: str
     worktree_setup: str | None
+    review_column: str
+    blocked_column: str
 
 
 def load_config(path: Path) -> Config:
@@ -101,6 +111,24 @@ def _build_config(values: dict[str, Any]) -> Config:
     if not trigger_column.strip():
         raise ConfigError("trigger_column must not be empty")
 
+    review_column = str(values["review_column"])
+    if not review_column.strip():
+        raise ConfigError("review_column must not be empty")
+
+    blocked_column = str(values["blocked_column"])
+    if not blocked_column.strip():
+        raise ConfigError("blocked_column must not be empty")
+
+    columns = {
+        "trigger_column": trigger_column,
+        "review_column": review_column,
+        "blocked_column": blocked_column,
+    }
+    if len(set(columns.values())) != len(columns):
+        raise ConfigError(
+            "trigger_column, review_column, and blocked_column must be three distinct values"
+        )
+
     worker_prompt = str(values["worker_prompt"])
     if "{issue}" not in worker_prompt:
         raise ConfigError("worker_prompt must contain the '{issue}' placeholder")
@@ -120,6 +148,8 @@ def _build_config(values: dict[str, Any]) -> Config:
         worker_prompt=worker_prompt,
         theme=str(values["theme"]),
         worktree_setup=worktree_setup,
+        review_column=review_column,
+        blocked_column=blocked_column,
     )
 
 

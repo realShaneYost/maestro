@@ -20,6 +20,8 @@ from typing import Any
 from rich.console import Console
 from rich.text import Text
 
+from maestro.core.models import BoardState
+
 
 @dataclass(frozen=True)
 class LogLine:
@@ -207,8 +209,95 @@ def recent_lines(logs_dir: Path, per_log: int = 20) -> list[LogLine]:
     return lines
 
 
-def render_recent(console: Console, logs_dir: Path, repo_slug: str) -> None:
-    """Print a one-shot snapshot of recent worker activity."""
+def render_board_summary(
+    board: BoardState,
+    trigger_column: str,
+    blocked_column: str,
+    review_column: str,
+) -> list[Text]:
+    """Build the per-column board summary as a list of rich :class:`Text` lines.
+
+    Columns are listed in a fixed order — ``trigger_column``, ``blocked_column``,
+    ``review_column``, then any other observed Status-field values in
+    alphabetical order. Empty columns are omitted. Each populated column gets
+    one header line and one ``  #N  short title`` line per issue.
+
+    Args:
+        board: Board state from a trigger-source poll.
+        trigger_column: Configured trigger-column name.
+        blocked_column: Configured blocked-column name.
+        review_column: Configured review-column name.
+
+    Returns:
+        Rendered lines for ``Console.print``. An empty list if no issues with
+        a Status value live on the board.
+    """
+    by_column: dict[str, list[tuple[int, str]]] = {}
+    for issue in board.issues:
+        column = issue.status_column
+        if column is None:
+            continue
+        by_column.setdefault(column, []).append((issue.number, issue.title))
+
+    fixed_order = [trigger_column, blocked_column, review_column]
+    others = sorted(c for c in by_column if c not in fixed_order)
+    lines: list[Text] = []
+    for column in [*fixed_order, *others]:
+        items = by_column.get(column)
+        if not items:
+            continue
+        header = Text()
+        header.append(f"{column}", style="header")
+        header.append(f"  ({len(items)})", style="timestamp")
+        lines.append(header)
+        for number, title in sorted(items, key=lambda pair: pair[0]):
+            row = Text()
+            row.append(f"  #{number}", style="issue")
+            row.append("  ")
+            row.append(_short_title(title, 60), style="message")
+            lines.append(row)
+    return lines
+
+
+def render_recent(
+    console: Console,
+    logs_dir: Path,
+    repo_slug: str,
+    board: BoardState | None = None,
+    *,
+    board_error: str | None = None,
+    trigger_column: str | None = None,
+    blocked_column: str | None = None,
+    review_column: str | None = None,
+) -> None:
+    """Print a one-shot snapshot — board summary first, then recent activity.
+
+    Args:
+        console: Themed console to print to.
+        logs_dir: Directory holding the per-issue log files.
+        repo_slug: GitHub ``owner/name`` slug used to fetch issue titles.
+        board: Polled board state, or ``None`` when the poll failed.
+        board_error: Message to print under "Board unreachable:" when ``board``
+            is ``None``. Ignored if ``board`` is set.
+        trigger_column: Configured trigger-column name (required when ``board``
+            is provided).
+        blocked_column: Configured blocked-column name.
+        review_column: Configured review-column name.
+    """
+    if board is not None and trigger_column and blocked_column and review_column:
+        summary = render_board_summary(board, trigger_column, blocked_column, review_column)
+        if summary:
+            console.print("Board:", style="header")
+            for summary_line in summary:
+                console.print(summary_line)
+            console.print()
+        else:
+            console.print("Board: (no issues with a Status value)", style="header")
+            console.print()
+    elif board_error is not None:
+        console.print(f"Board unreachable: {board_error}", style="error")
+        console.print()
+
     lines = recent_lines(logs_dir)
     if not lines:
         console.print("No worker activity.")

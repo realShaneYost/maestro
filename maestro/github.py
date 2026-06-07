@@ -31,16 +31,22 @@ logger = logging.getLogger(__name__)
 # tests can supply canned responses; the default really runs gh.
 GhRunner = Callable[[list[str]], str]
 
-# The project board and its items. `repositoryOwner` + the `ProjectV2Owner`
-# inline fragment resolves whether the owner is a user or an organisation.
-# `fieldValueByName` reads a single-select field directly, avoiding the costly
-# `fieldValues` connection. NOTE: `items(first: 100)` does not paginate; a board
-# with more than 100 items would need cursor pagination.
+# The project board, its items, and the Priority field's option list.
+# `repositoryOwner` + the `ProjectV2Owner` inline fragment resolves whether the
+# owner is a user or an organisation. `fieldValueByName` reads a single-select
+# field directly, avoiding the costly `fieldValues` connection. The
+# `priorityField` block fetches the Priority field's option list in declared
+# order — that order *is* the scheduling rank (index 0 dispatches first), so
+# the option names themselves carry no meaning. NOTE: `items(first: 100)` does
+# not paginate; a board with more than 100 items would need cursor pagination.
 _BOARD_QUERY = """
 query($login: String!, $number: Int!) {
   repositoryOwner(login: $login) {
     ... on ProjectV2Owner {
       projectV2(number: $number) {
+        priorityField: field(name: "Priority") {
+          ... on ProjectV2SingleSelectField { options { name } }
+        }
         items(first: 100) {
           nodes {
             content {
@@ -59,6 +65,22 @@ query($login: String!, $number: Int!) {
     }
   }
   rateLimit { cost remaining }
+}
+"""
+
+# Just the Status field's option list, fetched on its own when `maestro doctor`
+# wants to verify the field is configured without paying for a full board read.
+_STATUS_FIELD_QUERY = """
+query($login: String!, $number: Int!) {
+  repositoryOwner(login: $login) {
+    ... on ProjectV2Owner {
+      projectV2(number: $number) {
+        statusField: field(name: "Status") {
+          ... on ProjectV2SingleSelectField { options { name } }
+        }
+      }
+    }
+  }
 }
 """
 
@@ -95,19 +117,81 @@ def _run_gh(args: list[str]) -> str:
     return result.stdout
 
 
-def _parse_priority(value: object) -> int | None:
-    """Map a Priority-field value such as ``P1`` to a sort key.
+def _parse_priority_rank_map(payload: dict[str, Any]) -> dict[str, int]:
+    """Extract the Priority field's option order as a ``{name: index}`` map.
 
-    Lower is higher priority: ``P0`` becomes 0, ``P1`` becomes 1, and so on.
-    Anything that is not ``P<digits>`` (including an unset field) yields
-    ``None``, which the scheduler treats as lowest priority.
+    The map's values are the option positions in the field's defined option
+    list: index 0 is the highest priority. A missing Priority field, or a
+    payload whose ``priorityField`` block is absent or unshaped, yields an
+    empty map — every issue then has ``priority`` ``None``, and the scheduler
+    sorts them last.
+
+    Args:
+        payload: The decoded JSON from the project-board query.
+
+    Returns:
+        A ``{option-name: index}`` map, possibly empty.
+    """
+    try:
+        owner = payload["data"]["repositoryOwner"]
+        field = owner["projectV2"].get("priorityField") if isinstance(owner, dict) else None
+    except (KeyError, TypeError, AttributeError):
+        return {}
+    if not isinstance(field, dict):
+        return {}
+    options = field.get("options")
+    if not isinstance(options, list):
+        return {}
+    rank: dict[str, int] = {}
+    for index, option in enumerate(options):
+        if isinstance(option, dict):
+            name = option.get("name")
+            if isinstance(name, str):
+                rank[name] = index
+    return rank
+
+
+def _parse_priority(value: object, rank: dict[str, int]) -> int | None:
+    """Look up a selected Priority option's rank in ``rank``.
+
+    Args:
+        value: The selected option name from a ``priority`` field-value node,
+            or ``None`` when the field is unset on the card.
+        rank: The ``{option-name: index}`` map built by
+            :func:`_parse_priority_rank_map`.
+
+    Returns:
+        The option's index in the field's defined option list (0 dispatches
+        first), or ``None`` when the field is unset, the selected option is
+        absent from the rank map, or the Priority field itself is missing
+        (an empty ``rank``).
     """
     if not isinstance(value, str):
         return None
-    text = value.strip()
-    if len(text) >= 2 and text[0] in {"P", "p"} and text[1:].isdigit():
-        return int(text[1:])
-    return None
+    return rank.get(value)
+
+
+def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
+    """Extract the Status field's option names from the standalone query.
+
+    Args:
+        payload: The decoded JSON from :data:`_STATUS_FIELD_QUERY`.
+
+    Returns:
+        The ordered option names, or ``None`` when the Status field does not
+        exist on the project board.
+    """
+    try:
+        owner = payload["data"]["repositoryOwner"]
+        field = owner["projectV2"].get("statusField") if isinstance(owner, dict) else None
+    except (KeyError, TypeError, AttributeError):
+        return None
+    if not isinstance(field, dict):
+        return None
+    options = field.get("options")
+    if not isinstance(options, list):
+        return None
+    return [option["name"] for option in options if isinstance(option, dict) and "name" in option]
 
 
 def _parse_open_issues(payload: dict[str, Any]) -> tuple[set[int], dict[int, frozenset[int]]]:
@@ -180,6 +264,7 @@ def _build_issues(
     nodes: list[dict[str, Any]],
     trigger_column: str,
     blocked_by: dict[int, frozenset[int]],
+    priority_rank: dict[str, int],
 ) -> list[Issue]:
     """Build :class:`Issue` records from raw project-board item nodes.
 
@@ -190,6 +275,10 @@ def _build_issues(
         nodes: Item nodes from the project-board query.
         trigger_column: Status-field value that marks an issue for dispatch.
         blocked_by: Map from an issue number to the issues it is blocked by.
+        priority_rank: Ordered Priority option names mapped to their index in
+            the field's defined option list — built by
+            :func:`_parse_priority_rank_map`. An empty map (missing Priority
+            field) yields ``None`` for every issue's priority.
 
     Returns:
         One :class:`Issue` per board item whose content is a GitHub issue.
@@ -202,13 +291,15 @@ def _build_issues(
         number = content["number"]
         status = node.get("status") or {}
         priority = node.get("priority") or {}
+        status_name = status.get("name") if isinstance(status.get("name"), str) else None
         issues.append(
             Issue(
                 number=number,
                 title=content.get("title", ""),
-                priority=_parse_priority(priority.get("name")),
+                priority=_parse_priority(priority.get("name"), priority_rank),
                 blocked_by=blocked_by.get(number, frozenset()),
-                in_trigger_column=status.get("name") == trigger_column,
+                in_trigger_column=status_name == trigger_column,
+                status_column=status_name,
             )
         )
     return issues
@@ -243,13 +334,41 @@ class StatusFieldTrigger:
         Raises:
             GitHubError: If a gh call fails or returns unexpected data.
         """
-        nodes = self._board_items()
+        nodes, priority_rank = self._board_items()
         open_numbers, blocked_by = self._open_issues()
-        issues = _build_issues(nodes, self._trigger_column, blocked_by)
+        issues = _build_issues(nodes, self._trigger_column, blocked_by, priority_rank)
         return BoardState(issues=issues, open_numbers=open_numbers)
 
-    def _board_items(self) -> list[dict[str, Any]]:
-        """Fetch the project board's item nodes via a tailored GraphQL query."""
+    def status_field_options(self) -> list[str] | None:
+        """Return the Status field's option names, or ``None`` if the field is absent.
+
+        Used by ``maestro doctor`` to verify the board's Status field has the
+        column names the configuration refers to. Read-only and mutates nothing.
+
+        Raises:
+            GitHubError: If the gh call fails or returns invalid JSON.
+        """
+        owner = self._repo_slug.split("/", 1)[0]
+        raw = self._run(
+            [
+                "api",
+                "graphql",
+                "-f",
+                f"query={_STATUS_FIELD_QUERY}",
+                "-f",
+                f"login={owner}",
+                "-F",
+                f"number={self._project_number}",
+            ]
+        )
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as err:
+            raise GitHubError(f"Invalid Status field response: {raw!r}") from err
+        return _parse_status_field_options(payload)
+
+    def _board_items(self) -> tuple[list[dict[str, Any]], dict[str, int]]:
+        """Fetch the project board's item nodes and Priority rank map."""
         owner = self._repo_slug.split("/", 1)[0]
         raw = self._run(
             [
@@ -268,7 +387,7 @@ class StatusFieldTrigger:
         except json.JSONDecodeError as err:
             raise GitHubError(f"Invalid project board response: {raw!r}") from err
         _log_rate_limit(payload)
-        return _parse_board(payload)
+        return _parse_board(payload), _parse_priority_rank_map(payload)
 
     def _open_issues(self) -> tuple[set[int], dict[int, frozenset[int]]]:
         """Fetch open issues and their dependencies via the GraphQL API."""

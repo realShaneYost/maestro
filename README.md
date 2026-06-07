@@ -38,11 +38,13 @@ Edit `maestro.yml` — at minimum `repo_path`, `repo_slug`, `project_number`, an
 ## Use
 
 ```
+maestro setup               # bootstrap the board's Priority field (idempotent)
+maestro doctor              # read-only preflight checks
 maestro run                 # start the poll/dispatch loop
-maestro status              # snapshot of in-flight workers
-maestro status --watch      # live-refreshing view
-maestro once --dry-run      # one poll; show decisions, dispatch nothing
+maestro status              # snapshot of the board and recent activity
+maestro status --watch      # live-refreshing worker-log view
+maestro once --dry-run      # one poll; explain each dispatch decision
 maestro clean               # prune finished worktrees and stale branches
 ```
 
-Run `maestro run` in one terminal; check on it with `maestro status` from another. If something goes wrong, see [`docs/recovery.md`](docs/recovery.md).
+Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup is in [`docs/runbook.md`](docs/runbook.md). If something goes wrong, see [`docs/recovery.md`](docs/recovery.md).

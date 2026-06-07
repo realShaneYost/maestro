@@ -33,6 +33,8 @@ def test_loads_minimal_config_and_applies_defaults(tmp_path):
     assert config.worker_prompt == "/cc-work {issue}"
     assert config.theme == "nord"
     assert config.worktree_setup is None
+    assert config.review_column == "In Review"
+    assert config.blocked_column == "Blocked"
 
 
 def test_missing_file_raises(tmp_path):
@@ -85,4 +87,28 @@ def test_worktree_setup_is_loaded_when_set(tmp_path):
 def test_empty_worktree_setup_raises(tmp_path):
     body = _MINIMAL.format(repo=tmp_path) + 'worktree_setup: ""\n'
     with pytest.raises(ConfigError, match="worktree_setup must not be empty"):
+        load_config(_write(tmp_path, body))
+
+
+def test_empty_review_column_raises(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'review_column: ""\n'
+    with pytest.raises(ConfigError, match="review_column must not be empty"):
+        load_config(_write(tmp_path, body))
+
+
+def test_empty_blocked_column_raises(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'blocked_column: ""\n'
+    with pytest.raises(ConfigError, match="blocked_column must not be empty"):
+        load_config(_write(tmp_path, body))
+
+
+def test_duplicate_column_names_raise(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'review_column: "In Progress"\n'
+    with pytest.raises(ConfigError, match="distinct"):
+        load_config(_write(tmp_path, body))
+
+
+def test_duplicate_review_and_blocked_raise(tmp_path):
+    body = _MINIMAL.format(repo=tmp_path) + 'review_column: "Done"\n' + 'blocked_column: "Done"\n'
+    with pytest.raises(ConfigError, match="distinct"):
         load_config(_write(tmp_path, body))

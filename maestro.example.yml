@@ -17,6 +17,14 @@ trigger_column: "In Progress"
 
 # --- Optional (defaults shown) ---
 
+# Status-field value a worker parks its card in when it opens its PR.
+# Reaching this column is how Maestro classifies a run as "done".
+review_column: "In Review"
+
+# Status-field value a worker parks its card in when it cannot proceed.
+# Reaching this column is how Maestro classifies a run as "blocked".
+blocked_column: "Blocked"
+
 # Hard ceiling on simultaneously running workers. Each worker is heavy.
 max_concurrent: 2
 

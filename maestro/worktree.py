@@ -13,10 +13,13 @@ work. It never merges, rebases, or commits.
 from __future__ import annotations
 
 import contextlib
+import logging
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # A runner takes a git argument list and returns captured stdout. Injectable so
 # tests can substitute a fake; the default really runs git.
@@ -136,8 +139,11 @@ class WorktreeManager:
         Fetches ``origin`` first so the worktree is cut from current main. The
         worktree starts detached; the worker creates its own branch inside it.
         Its environment is then provisioned so quality-gate tools work (see
-        :meth:`_provision_env`). The caller must ensure no worktree for this
-        issue already exists.
+        :meth:`_provision_env`). If a managed worktree for this issue already
+        exists at the target path — typically a kept-for-debugging worktree
+        from a previous failed run — it is force-removed first and a WARNING
+        is logged: by the time the operator has re-triggered the card, the
+        debugging window for the stale worktree is over by definition.
 
         Args:
             issue_number: The issue this worktree will host work for.
@@ -151,6 +157,11 @@ class WorktreeManager:
         """
         self._worktrees_dir.mkdir(parents=True, exist_ok=True)
         path = self._worktrees_dir / f"issue-{issue_number}"
+        if path.exists():
+            logger.warning("Discarding stale worktree at %s before fresh dispatch", path)
+            with contextlib.suppress(WorktreeError):
+                self.remove(path)
+            self.prune()
         self._run(["-C", str(self._repo), "fetch", "origin", "--quiet"])
         self._run(
             [

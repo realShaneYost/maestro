@@ -33,6 +33,11 @@ class Issue:
             held back while any blocker is still open.
         in_trigger_column: Whether the issue's project card currently sits in
             the configured trigger column.
+        status_column: The current Status-field value on the issue's card
+            (``"In Progress"``, ``"Blocked"``, …), or ``None`` when the Status
+            field is unset on the card. ``in_trigger_column`` is derived from
+            this; downstream code reads ``status_column`` directly when it
+            needs to know *which* column the card sits in.
     """
 
     number: int
@@ -40,6 +45,7 @@ class Issue:
     priority: int | None
     blocked_by: frozenset[int]
     in_trigger_column: bool
+    status_column: str | None
 
 
 @dataclass(frozen=True)

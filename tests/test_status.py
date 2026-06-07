@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from maestro.core.models import BoardState, Issue
 from maestro.status import (
     LogLine,
     _issue_of,
@@ -12,7 +13,28 @@ from maestro.status import (
     _short_title,
     _summarize,
     recent_lines,
+    render_board_summary,
 )
+
+
+def _issue(
+    number: int,
+    title: str = "",
+    *,
+    status_column: str | None,
+) -> Issue:
+    return Issue(
+        number=number,
+        title=title,
+        priority=None,
+        blocked_by=frozenset(),
+        in_trigger_column=status_column == "In Progress",
+        status_column=status_column,
+    )
+
+
+def _flatten(lines):
+    return "\n".join(line.plain for line in lines)
 
 
 def test_issue_of_extracts_number(tmp_path):
@@ -150,3 +172,59 @@ def test_render_line_contains_all_parts():
 def test_render_line_without_title_shows_number_only():
     text = _render_line(LogLine(issue=58, message="m", is_error=False), "12:00:00", "")
     assert text.plain.startswith("#58  ")
+
+
+def test_render_board_summary_orders_columns_fixed_then_others_alpha():
+    board = BoardState(
+        issues=[
+            _issue(1, "in-progress one", status_column="In Progress"),
+            _issue(2, "blocked one", status_column="Blocked"),
+            _issue(3, "review one", status_column="In Review"),
+            _issue(4, "backlog one", status_column="Backlog"),
+            _issue(5, "done one", status_column="Done"),
+        ],
+        open_numbers={1, 2, 3, 4, 5},
+    )
+    lines = render_board_summary(board, "In Progress", "Blocked", "In Review")
+    text = _flatten(lines)
+    # Fixed-order columns first, then the other observed columns alphabetically.
+    assert text.index("In Progress") < text.index("Blocked")
+    assert text.index("Blocked") < text.index("In Review")
+    assert text.index("In Review") < text.index("Backlog")
+    assert text.index("Backlog") < text.index("Done")
+
+
+def test_render_board_summary_omits_empty_columns():
+    board = BoardState(
+        issues=[_issue(1, "only", status_column="In Progress")],
+        open_numbers={1},
+    )
+    lines = render_board_summary(board, "In Progress", "Blocked", "In Review")
+    text = _flatten(lines)
+    assert "Blocked" not in text
+    assert "In Review" not in text
+    assert "In Progress" in text
+
+
+def test_render_board_summary_skips_issues_without_a_status():
+    board = BoardState(
+        issues=[_issue(1, "untriaged", status_column=None)],
+        open_numbers={1},
+    )
+    assert render_board_summary(board, "In Progress", "Blocked", "In Review") == []
+
+
+def test_render_board_summary_lists_issue_numbers_and_short_titles():
+    board = BoardState(
+        issues=[
+            _issue(42, "Implement feature X", status_column="In Progress"),
+            _issue(7, "Tiny ticket", status_column="In Progress"),
+        ],
+        open_numbers={42, 7},
+    )
+    lines = render_board_summary(board, "In Progress", "Blocked", "In Review")
+    text = _flatten(lines)
+    # Issues are sorted by number within the column.
+    assert text.index("#7") < text.index("#42")
+    assert "Implement feature X" in text
+    assert "Tiny ticket" in text

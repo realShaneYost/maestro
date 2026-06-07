@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 from maestro.core.models import Issue
-from maestro.core.scheduler import dispatchable_issues
+from maestro.core.scheduler import dispatchable_issues, explain_dispatch
 
 
-def make_issue(number, *, priority=None, blocked_by=None, in_trigger_column=True):
+def make_issue(
+    number,
+    *,
+    priority=None,
+    blocked_by=None,
+    in_trigger_column=True,
+    status_column="In Progress",
+):
     """Build an Issue with test-friendly defaults."""
     return Issue(
         number=number,
@@ -14,6 +21,7 @@ def make_issue(number, *, priority=None, blocked_by=None, in_trigger_column=True
         priority=priority,
         blocked_by=frozenset(blocked_by or ()),
         in_trigger_column=in_trigger_column,
+        status_column=status_column,
     )
 
 
@@ -76,3 +84,89 @@ def test_orders_by_priority_then_number():
     result = dispatchable_issues(issues, {1, 3, 5, 9}, set(), max_concurrent=4)
     # Priority 1 before 2, ties broken by issue number, no-priority last.
     assert [i.number for i in result] == [3, 9, 5, 1]
+
+
+def _explain_one(issue, *, open_numbers=None, in_flight=None, max_concurrent=2):
+    """Return the single verdict for ``issue`` from explain_dispatch."""
+    if open_numbers is None:
+        open_numbers = {issue.number}
+    if in_flight is None:
+        in_flight = set()
+    return explain_dispatch([issue], open_numbers, in_flight, max_concurrent)[0]
+
+
+def test_explain_would_dispatch_with_priority_rank():
+    v = _explain_one(make_issue(1, priority=0))
+    assert v.dispatch is True
+    assert "priority rank 0" in v.reason
+
+
+def test_explain_would_dispatch_with_no_priority_set():
+    v = _explain_one(make_issue(1))
+    assert v.dispatch is True
+    assert "no priority set" in v.reason
+
+
+def test_explain_skips_when_not_in_trigger_column():
+    v = _explain_one(make_issue(1, in_trigger_column=False, status_column="Backlog"))
+    assert v.dispatch is False
+    assert "not in trigger column" in v.reason
+    assert "Backlog" in v.reason
+
+
+def test_explain_status_column_none_falls_back_to_no_column_label():
+    v = _explain_one(make_issue(1, in_trigger_column=False, status_column=None))
+    assert v.dispatch is False
+    assert "no column" in v.reason
+
+
+def test_explain_skips_closed_issue():
+    v = _explain_one(make_issue(1), open_numbers=set())
+    assert v.dispatch is False
+    assert "closed" in v.reason
+
+
+def test_explain_skips_in_flight_issue():
+    v = _explain_one(make_issue(1), in_flight={1})
+    assert v.dispatch is False
+    assert "already in flight" in v.reason
+
+
+def test_explain_skips_blocked_by_open_issue():
+    issues = [make_issue(2, blocked_by={1})]
+    verdicts = explain_dispatch(issues, {1, 2}, set(), max_concurrent=2)
+    assert verdicts[0].dispatch is False
+    assert "blocked by open issue(s): #1" in verdicts[0].reason
+
+
+def test_explain_skips_extra_ready_when_max_concurrent_reached():
+    issues = [make_issue(1), make_issue(2), make_issue(3)]
+    verdicts = explain_dispatch(issues, {1, 2, 3}, set(), max_concurrent=2)
+    skipped = [v for v in verdicts if not v.dispatch]
+    assert len(skipped) == 1
+    assert "no free worker slots" in skipped[0].reason
+
+
+def test_explain_dispatch_set_matches_dispatchable_issues():
+    issues = [
+        make_issue(5, priority=2),
+        make_issue(3, priority=1, blocked_by={9}),
+        make_issue(9, priority=1, in_trigger_column=False, status_column="Backlog"),
+        make_issue(1, priority=None),
+        make_issue(7, priority=0),
+    ]
+    open_numbers = {1, 3, 5, 7, 9}
+    in_flight: set[int] = {1}
+    max_concurrent = 3
+    verdicts = explain_dispatch(issues, open_numbers, in_flight, max_concurrent)
+    explained = {v.issue.number for v in verdicts if v.dispatch}
+    direct = {
+        i.number for i in dispatchable_issues(issues, open_numbers, in_flight, max_concurrent)
+    }
+    assert explained == direct
+
+
+def test_explain_returns_one_verdict_per_input_issue_in_order():
+    issues = [make_issue(7), make_issue(3), make_issue(5)]
+    verdicts = explain_dispatch(issues, {3, 5, 7}, set(), max_concurrent=10)
+    assert [v.issue.number for v in verdicts] == [7, 3, 5]

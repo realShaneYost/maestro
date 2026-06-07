@@ -1,0 +1,142 @@
+"""Tests for ``maestro setup`` — narrowly scoped board bootstrap."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from maestro.config import Config
+from maestro.setup import run_setup
+
+
+def _config(tmp_path: Path) -> Config:
+    return Config(
+        repo_path=tmp_path,
+        repo_slug="owner/repo",
+        project_number=1,
+        trigger_column="In Progress",
+        max_concurrent=2,
+        poll_interval=60,
+        worker_prompt="/cc-work {issue}",
+        theme="nord",
+        worktree_setup=None,
+        review_column="In Review",
+        blocked_column="Blocked",
+    )
+
+
+def _status_payload(columns: list[str]) -> str:
+    return json.dumps(
+        {
+            "data": {
+                "repositoryOwner": {
+                    "projectV2": {"statusField": {"options": [{"name": name} for name in columns]}}
+                }
+            }
+        }
+    )
+
+
+def _priority_payload(options: list[str] | None) -> str:
+    field_value: dict[str, object] | None = (
+        None if options is None else {"options": [{"name": name} for name in options]}
+    )
+    return json.dumps({"data": {"repositoryOwner": {"projectV2": {"priorityField": field_value}}}})
+
+
+def _make_runner(*, status: list[str], priority_options: list[str] | None):
+    """Build a gh runner whose responses depend on the request shape."""
+    created: list[list[str]] = []
+    state = {"priority_options": priority_options}
+
+    def run(args: list[str]) -> tuple[int, str, str]:
+        joined = " ".join(args)
+        if args[:2] == ["auth", "status"]:
+            return 0, "Token scopes: 'repo', 'project'\n", ""
+        if args[:2] == ["project", "field-create"]:
+            created.append(list(args))
+            state["priority_options"] = ["Critical", "High", "Normal", "Low"]
+            return 0, "created\n", ""
+        if "statusField" in joined:
+            return 0, _status_payload(status), ""
+        if "priorityField" in joined:
+            return 0, _priority_payload(state["priority_options"]), ""
+        return 0, "", ""
+
+    return run, created
+
+
+def test_setup_creates_priority_field_when_absent(tmp_path):
+    runner, created = _make_runner(
+        status=["Backlog", "In Progress", "In Review", "Blocked"], priority_options=None
+    )
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.priority_created is True
+    assert report.priority_already_present is False
+    assert report.status_present is True
+    assert any(
+        call[:2] == ["project", "field-create"] and "Critical,High,Normal,Low" in call
+        for call in created
+    )
+
+
+def test_setup_skips_priority_when_present(tmp_path):
+    runner, created = _make_runner(
+        status=["Backlog", "In Progress", "In Review", "Blocked"],
+        priority_options=["Critical", "High", "Normal"],
+    )
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.priority_created is False
+    assert report.priority_already_present is True
+    assert created == []
+
+
+def test_setup_reports_missing_status_options_without_mutating(tmp_path):
+    runner, created = _make_runner(
+        status=["Backlog", "In Progress"],
+        priority_options=["Critical"],
+    )
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.status_present is False
+    assert "In Review" in report.status_missing
+    assert "Blocked" in report.status_missing
+    assert "In Progress" not in report.status_missing
+    # The runner must NOT have been asked to mutate the Status field.
+    assert not any("statusField" in " ".join(call) and "create" in call for call in created)
+
+
+def test_setup_is_idempotent(tmp_path):
+    """Running setup twice mutates nothing on the second run."""
+    runner, created = _make_runner(
+        status=["Backlog", "In Progress", "In Review", "Blocked"],
+        priority_options=None,
+    )
+    first = run_setup(_config(tmp_path), gh_runner=runner)
+    second = run_setup(_config(tmp_path), gh_runner=runner)
+    assert first.priority_created is True
+    assert second.priority_created is False
+    assert second.priority_already_present is True
+    # Only one create call total — the second run reused the now-present field.
+    assert len(created) == 1
+
+
+def test_setup_aborts_when_gh_auth_fails(tmp_path):
+    def runner(args):
+        if args[:2] == ["auth", "status"]:
+            return 1, "", "not logged in\n"
+        return 0, "", ""
+
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.aborted is not None
+    assert "gh auth" in report.aborted
+
+
+def test_setup_aborts_when_project_scope_missing(tmp_path):
+    def runner(args):
+        if args[:2] == ["auth", "status"]:
+            return 0, "Token scopes: 'repo'\n", ""
+        return 0, "", ""
+
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.aborted is not None
+    assert "project scope" in report.aborted

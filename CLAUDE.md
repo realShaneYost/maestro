@@ -11,9 +11,8 @@ Maestro is deliberately a plain program, not a long-running AI session. It was c
 ## Current Status
 
 **v1 build complete.** Built in vertical slices, each with tests; `black`,
-`ruff`, `mypy --strict`, and `pytest` all green. Before first live use the
-operator adds a `Priority` single-select field to the board, writes a
-`maestro.yml`, and confirms `maestro once --dry-run` against the real board.
+`ruff`, `mypy --strict`, and `pytest` all green. For a fresh setup, see
+`docs/runbook.md`.
 
 1. Foundation — config, core models, scheduler, CLI skeleton. *(done)*
 2. Worktree management + worker dispatch. *(done)*
@@ -23,6 +22,11 @@ operator adds a `Priority` single-select field to the board, writes a
 6. `templates/worker-skill.md`. *(done)*
 7. GitHub trigger source (`StatusFieldTrigger`) — Projects V2 board polling. *(done)*
 8. `run` / `once` wired to the trigger. *(done)*
+9. Board-semantics upgrade — column-based outcome classification, Priority
+   rank by option order, `review_column` / `blocked_column` config,
+   self-explaining `--dry-run`, board summary in `maestro status`,
+   `maestro doctor`, `maestro setup`, and stale-worktree auto-discard on
+   dispatch. *(done)*
 
 See `docs/architecture.md` for the full design.
 

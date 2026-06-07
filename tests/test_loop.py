@@ -44,18 +44,22 @@ def _fake_spawn(command, cwd, log_path):
     return FakeProcess()
 
 
+def _issue(number: int, *, status_column: str | None = "In Progress") -> Issue:
+    return Issue(
+        number=number,
+        title=f"#{number}",
+        priority=None,
+        blocked_by=frozenset(),
+        in_trigger_column=status_column == "In Progress",
+        status_column=status_column,
+    )
+
+
 def _board(*numbers: int) -> BoardState:
-    issues = [
-        Issue(
-            number=n,
-            title=f"#{n}",
-            priority=None,
-            blocked_by=frozenset(),
-            in_trigger_column=True,
-        )
-        for n in numbers
-    ]
-    return BoardState(issues=issues, open_numbers=set(numbers))
+    return BoardState(
+        issues=[_issue(n) for n in numbers],
+        open_numbers=set(numbers),
+    )
 
 
 def _config(tmp_path, max_concurrent=2) -> Config:
@@ -69,6 +73,8 @@ def _config(tmp_path, max_concurrent=2) -> Config:
         worker_prompt="/cc-work {issue}",
         theme="nord",
         worktree_setup=None,
+        review_column="In Review",
+        blocked_column="Blocked",
     )
 
 
@@ -104,12 +110,16 @@ def test_tick_does_not_redispatch_in_flight(tmp_path):
     assert len(loop._workers) == 1
 
 
-def test_reap_records_a_done_worker(tmp_path):
+def _board_with(issue: Issue) -> BoardState:
+    return BoardState(issues=[issue], open_numbers={issue.number})
+
+
+def test_reap_records_a_done_worker_by_review_column(tmp_path):
     trigger = FakeTrigger(_board(5))
     loop = _make_loop(tmp_path, trigger)
     loop.tick()
     loop._workers[5].process.finish(0)
-    trigger.board = _board()  # issue 5 has left the trigger column
+    trigger.board = _board_with(_issue(5, status_column="In Review"))
     loop.tick()
     assert 5 not in loop._workers
     records = read_runs(tmp_path / "runs.jsonl")
@@ -118,14 +128,61 @@ def test_reap_records_a_done_worker(tmp_path):
     assert records[0].outcome == "done"
 
 
-def test_reap_marks_a_failed_worker(tmp_path):
+def test_reap_records_blocked_by_column_and_removes_worktree(tmp_path):
+    calls: list[list[str]] = []
+
+    def runner(args: list[str]) -> str:
+        calls.append(list(args))
+        return ""
+
+    worktrees = WorktreeManager(tmp_path / "repo", tmp_path / "worktrees", runner=runner)
     trigger = FakeTrigger(_board(8))
+    loop = Loop(
+        _config(tmp_path),
+        trigger,
+        worktrees,
+        tmp_path / "logs",
+        tmp_path / "runs.jsonl",
+        spawn=_fake_spawn,
+        sleep=lambda _s: None,
+    )
+    loop.tick()
+    loop._workers[8].process.finish(2)  # non-zero blocked exit
+    trigger.board = _board_with(_issue(8, status_column="Blocked"))
+    loop.tick()
+    record = read_runs(tmp_path / "runs.jsonl")[0]
+    assert record.outcome == "blocked"
+    assert any("worktree" in call and "remove" in call for call in calls)
+
+
+def test_reap_crashed_exit_zero_in_trigger_column_is_failed(tmp_path):
+    """A worker that exits cleanly without parking its card is a contract crash."""
+    trigger = FakeTrigger(_board(7))
     loop = _make_loop(tmp_path, trigger)
     loop.tick()
-    loop._workers[8].process.finish(1)
-    trigger.board = _board()
+    loop._workers[7].process.finish(0)
+    # Card stays in trigger column — no parking happened.
     loop.tick()
     assert read_runs(tmp_path / "runs.jsonl")[0].outcome == "failed"
+
+
+def test_reap_closed_issue_fallback_uses_exit_code(tmp_path):
+    """If the issue is closed and removed from the board, the exit code wins."""
+    trigger = FakeTrigger(_board(11))
+    loop = _make_loop(tmp_path, trigger)
+    loop.tick()
+    loop._workers[11].process.finish(0)
+    trigger.board = _board()  # issue 11 has left the board entirely
+    loop.tick()
+    assert read_runs(tmp_path / "runs.jsonl")[0].outcome == "done"
+
+    trigger2 = FakeTrigger(_board(12))
+    loop2 = _make_loop(tmp_path, trigger2)
+    loop2.tick()
+    loop2._workers[12].process.finish(1)
+    trigger2.board = _board()
+    loop2.tick()
+    assert read_runs(tmp_path / "runs.jsonl")[-1].outcome == "failed"
 
 
 def test_run_exits_cleanly_on_interrupt(tmp_path):
@@ -164,7 +221,9 @@ def test_recently_dispatched_releases_when_card_leaves_trigger(tmp_path):
     loop.tick()
     loop._workers[1].process.finish(0)
     trigger.board = _board()  # card has left the trigger column
-    loop.tick()
+    loop.tick()  # reap adds to guard
+    assert loop._recently_dispatched == {1}
+    loop.tick()  # next tick: release runs first, the guard clears
     assert loop._recently_dispatched == set()
     trigger.board = _board(1)  # card re-enters the trigger column
     loop.tick()
@@ -177,15 +236,10 @@ def test_recently_dispatched_releases_when_issue_closes(tmp_path):
     loop.tick()
     loop._workers[1].process.finish(0)
     # Card stays in the trigger column, but the issue is no longer open.
-    issue = Issue(
-        number=1,
-        title="#1",
-        priority=None,
-        blocked_by=frozenset(),
-        in_trigger_column=True,
-    )
-    trigger.board = BoardState(issues=[issue], open_numbers=set())
-    loop.tick()
+    trigger.board = BoardState(issues=[_issue(1)], open_numbers=set())
+    loop.tick()  # reap adds to guard
+    assert loop._recently_dispatched == {1}
+    loop.tick()  # release runs first on the next tick and removes the closed issue
     assert loop._recently_dispatched == set()
 
 

@@ -16,10 +16,11 @@ from rich.logging import RichHandler
 
 from maestro.clean import CleanReport, clean
 from maestro.config import Config, ConfigError, load_config
-from maestro.core.models import Issue
-from maestro.core.scheduler import dispatchable_issues
+from maestro.core.scheduler import DispatchVerdict, explain_dispatch
+from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.loop import Loop
+from maestro.setup import SetupReport, run_setup
 from maestro.status import render_recent, watch
 from maestro.theme import ThemeError, load_theme
 from maestro.worktree import WorktreeError, WorktreeManager
@@ -65,19 +66,49 @@ def _cmd_status(args: argparse.Namespace) -> int:
     console = Console(theme=load_theme(config.theme))
     if args.watch:
         watch(console, _LOGS_DIR, config.repo_slug)
-    else:
-        render_recent(console, _LOGS_DIR, config.repo_slug)
+        return 0
+    board = None
+    board_error: str | None = None
+    try:
+        board = _trigger(config).poll()
+    except GitHubError as err:
+        board_error = str(err)
+    render_recent(
+        console,
+        _LOGS_DIR,
+        config.repo_slug,
+        board,
+        board_error=board_error,
+        trigger_column=config.trigger_column,
+        blocked_column=config.blocked_column,
+        review_column=config.review_column,
+    )
     return 0
 
 
-def _print_dry_run(console: Console, issues: list[Issue]) -> None:
-    """Print the issues a dry-run poll would dispatch."""
-    if not issues:
-        console.print("Dry run — nothing would be dispatched.")
+def _print_dry_run(console: Console, verdicts: list[DispatchVerdict]) -> None:
+    """Print each board issue's dispatch verdict, dispatchable ones first."""
+    if not verdicts:
+        console.print("Dry run — no issues on the board.")
         return
-    console.print(f"Dry run — would dispatch {len(issues)} issue(s):")
-    for issue in issues:
-        console.print(f"  [issue]#{issue.number}[/issue]  {issue.title}")
+    chosen = [v for v in verdicts if v.dispatch]
+    skipped = [v for v in verdicts if not v.dispatch]
+    if chosen:
+        console.print(f"Dry run — would dispatch {len(chosen)} issue(s):")
+        for verdict in chosen:
+            console.print(
+                f"  [issue]#{verdict.issue.number}[/issue]  {verdict.issue.title}  "
+                f"[message]— {verdict.reason}[/message]"
+            )
+    else:
+        console.print("Dry run — nothing would be dispatched.")
+    if skipped:
+        console.print(f"Skipped {len(skipped)} issue(s):")
+        for verdict in skipped:
+            console.print(
+                f"  [issue]#{verdict.issue.number}[/issue]  {verdict.issue.title}  "
+                f"[message]— {verdict.reason}[/message]"
+            )
 
 
 def _cmd_once(args: argparse.Namespace) -> int:
@@ -87,8 +118,8 @@ def _cmd_once(args: argparse.Namespace) -> int:
     trigger = _trigger(config)
     if args.dry_run:
         board = trigger.poll()
-        ready = dispatchable_issues(board.issues, board.open_numbers, set(), config.max_concurrent)
-        _print_dry_run(console, ready)
+        verdicts = explain_dispatch(board.issues, board.open_numbers, set(), config.max_concurrent)
+        _print_dry_run(console, verdicts)
         return 0
     _setup_logging(console)
     worktrees = _worktree_manager(config)
@@ -104,6 +135,73 @@ def _print_clean_report(console: Console, report: CleanReport) -> None:
         console.print("Cleared logs/.")
     if report.history_cleared:
         console.print("Truncated runs.jsonl.")
+
+
+_LEVEL_MARK = {
+    CheckLevel.PASS: ("[green]✓[/green]", "pass"),
+    CheckLevel.FAIL: ("[error]✗[/error]", "fail"),
+    CheckLevel.WARN: ("[yellow]![/yellow]", "warn"),
+}
+
+
+def _print_doctor_results(console: Console, results: list[CheckResult]) -> None:
+    """Render preflight results one row per check."""
+    for result in results:
+        mark, _ = _LEVEL_MARK[result.level]
+        console.print(
+            f"  {mark}  [issue]{result.name}[/issue]  [message]{result.message}[/message]"
+        )
+
+
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    """Handle ``maestro doctor`` — read-only preflight checks."""
+    config = load_config(Path(args.config))
+    console = Console(theme=load_theme(config.theme))
+    results = run_checks(config)
+    _print_doctor_results(console, results)
+    failures = sum(1 for r in results if r.level is CheckLevel.FAIL)
+    warns = sum(1 for r in results if r.level is CheckLevel.WARN)
+    console.print(f"\n{len(results)} check(s); " f"{failures} failure(s), {warns} warning(s).")
+    return 1 if failures else 0
+
+
+def _print_setup_report(console: Console, report: SetupReport) -> None:
+    """Render the setup report to the console."""
+    if report.aborted:
+        console.print(f"[error]Setup aborted:[/error] {report.aborted}")
+        return
+    if report.priority_created:
+        console.print(
+            "Created Priority field with options " "[message]Critical, High, Normal, Low[/message]."
+        )
+    elif report.priority_already_present:
+        console.print("Priority field already present; left untouched.")
+    if report.status_present:
+        console.print("Status field has every configured column.")
+    else:
+        console.print(
+            "[error]Status field is missing option(s):[/error] "
+            + ", ".join(repr(name) for name in report.status_missing)
+        )
+        console.print(
+            "Add them manually: project board -> ⋯ -> Settings -> Fields -> "
+            "Status -> Add option. Maestro setup never mutates the Status field."
+        )
+    console.print(
+        "\nRun [issue]maestro doctor[/issue] to verify, then "
+        "[issue]maestro once --dry-run[/issue]."
+    )
+
+
+def _cmd_setup(args: argparse.Namespace) -> int:
+    """Handle ``maestro setup`` — narrowly scoped board bootstrap."""
+    config = load_config(Path(args.config))
+    console = Console(theme=load_theme(config.theme))
+    report = run_setup(config)
+    _print_setup_report(console, report)
+    if report.aborted or not report.status_present:
+        return 1
+    return 0
 
 
 def _cmd_clean(args: argparse.Namespace) -> int:
@@ -146,6 +244,12 @@ def build_parser() -> argparse.ArgumentParser:
     clean_cmd.add_argument("--history", action="store_true", help="also truncate runs.jsonl")
     clean_cmd.add_argument("--all", action="store_true", help="clean everything")
     clean_cmd.set_defaults(func=_cmd_clean)
+
+    doctor = sub.add_parser("doctor", help="read-only preflight checks")
+    doctor.set_defaults(func=_cmd_doctor)
+
+    setup_cmd = sub.add_parser("setup", help="bootstrap a board's Priority field")
+    setup_cmd.set_defaults(func=_cmd_setup)
 
     return parser
 

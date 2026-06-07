@@ -34,12 +34,17 @@ Workers are stateless; all durable state lives in GitHub. A worker opens its PR,
 
 ## Invariants
 
-1. Maestro's authority ends at PR-open. It never merges.
+1. Maestro's authority ends at PR-open. It never merges. `maestro setup` is the one deliberate exception: a bootstrap-only command that may create a Priority field on the board. The `run` loop itself never writes to GitHub, and nothing — anywhere, ever — merges a PR.
 2. `core/` never does screen I/O — the CLI and any future TUI are thin renderers.
 3. The scheduler is pure, deterministic code — no language model.
 4. Workers are stateless and isolated from one another.
 5. Logs and `runs.jsonl` live outside worktrees and persist as the audit trail.
 6. `status --watch` is read-only.
+
+## Known limitations
+
+- The board query and open-issues query both use GraphQL `first: 100` without cursor pagination. Boards larger than 100 items, or repositories with more than 100 open issues, are silently truncated.
+- The Priority field's option order is scheduling semantics: index 0 dispatches first. Reordering the options on the Projects V2 settings screen silently changes the dispatch rank.
 
 ## Out of scope for v1
 
