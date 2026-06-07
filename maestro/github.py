@@ -70,31 +70,22 @@ query($login: String!, $number: Int!) {
 
 # Just the Status field's option list, fetched on its own when `maestro doctor`
 # wants to verify the field is configured without paying for a full board read.
-_STATUS_FIELD_QUERY = """
+# Enumerate the board's single-select fields and pick out the one we want by
+# name client-side. Querying `field(name: "Priority")` directly errors out
+# ("Could not resolve to a Unions::ProjectV2FieldConfiguration") when the field
+# does not exist — which is precisely the case `maestro setup` must handle on a
+# fresh board. Listing the fields lets an absent field read as "not present"
+# rather than a hard failure. Powers the preflight checks (`maestro doctor`)
+# and the board-bootstrap command (`maestro setup`).
+_FIELDS_QUERY = """
 query($login: String!, $number: Int!) {
   repositoryOwner(login: $login) {
     ... on ProjectV2Owner {
       projectV2(number: $number) {
-        statusField: field(name: "Status") {
-          ... on ProjectV2SingleSelectField { options { name } }
-        }
-      }
-    }
-  }
-}
-"""
-
-# Just the Priority field's option list — paired with the Status query for
-# preflight checks (`maestro doctor`) and the board-bootstrap command
-# (`maestro setup`). Keeps `doctor` and `setup` off the trigger's private
-# attributes and out of the full board read.
-_PRIORITY_FIELD_QUERY = """
-query($login: String!, $number: Int!) {
-  repositoryOwner(login: $login) {
-    ... on ProjectV2Owner {
-      projectV2(number: $number) {
-        priorityField: field(name: "Priority") {
-          ... on ProjectV2SingleSelectField { options { name } }
+        fields(first: 50) {
+          nodes {
+            ... on ProjectV2SingleSelectField { name options { name } }
+          }
         }
       }
     }
@@ -189,39 +180,42 @@ def _parse_priority(value: object, rank: dict[str, int]) -> int | None:
     return rank.get(value)
 
 
-def _parse_single_select_options(payload: dict[str, Any], field_alias: str) -> list[str] | None:
-    """Extract a single-select field's option names by GraphQL alias.
+def _parse_single_select_options(payload: dict[str, Any], field_name: str) -> list[str] | None:
+    """Extract a single-select field's option names by field name.
 
     Args:
-        payload: The decoded JSON from the standalone field query.
-        field_alias: The alias used in the query (``"statusField"`` or
-            ``"priorityField"``).
+        payload: The decoded JSON from the fields-enumeration query.
+        field_name: The board field to find (``"Status"`` or ``"Priority"``).
 
     Returns:
-        The ordered option names, or ``None`` when the named field does not
-        exist on the project board.
+        The ordered option names, or ``None`` when no single-select field with
+        that name exists on the project board.
     """
     try:
         owner = payload["data"]["repositoryOwner"]
-        field = owner["projectV2"].get(field_alias) if isinstance(owner, dict) else None
+        nodes = owner["projectV2"]["fields"]["nodes"] if isinstance(owner, dict) else None
     except (KeyError, TypeError, AttributeError):
         return None
-    if not isinstance(field, dict):
+    if not isinstance(nodes, list):
         return None
-    options = field.get("options")
-    if not isinstance(options, list):
-        return None
-    return [option["name"] for option in options if isinstance(option, dict) and "name" in option]
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("name") != field_name:
+            continue
+        options = node.get("options")
+        if not isinstance(options, list):
+            return None
+        return [opt["name"] for opt in options if isinstance(opt, dict) and "name" in opt]
+    return None
 
 
 def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
-    """Extract the Status field's option names from the standalone query."""
-    return _parse_single_select_options(payload, "statusField")
+    """Extract the Status field's option names from the fields query."""
+    return _parse_single_select_options(payload, "Status")
 
 
 def _parse_priority_field_options(payload: dict[str, Any]) -> list[str] | None:
-    """Extract the Priority field's option names from the standalone query."""
-    return _parse_single_select_options(payload, "priorityField")
+    """Extract the Priority field's option names from the fields query."""
+    return _parse_single_select_options(payload, "Priority")
 
 
 def _parse_open_issues(payload: dict[str, Any]) -> tuple[set[int], dict[int, frozenset[int]]]:
@@ -378,7 +372,7 @@ class StatusFieldTrigger:
         Raises:
             GitHubError: If the gh call fails or returns invalid JSON.
         """
-        payload = self._run_field_query(_STATUS_FIELD_QUERY, "Status field response")
+        payload = self._run_field_query(_FIELDS_QUERY, "fields response")
         return _parse_status_field_options(payload)
 
     def priority_field_options(self) -> list[str] | None:
@@ -391,7 +385,7 @@ class StatusFieldTrigger:
         Raises:
             GitHubError: If the gh call fails or returns invalid JSON.
         """
-        payload = self._run_field_query(_PRIORITY_FIELD_QUERY, "Priority field response")
+        payload = self._run_field_query(_FIELDS_QUERY, "fields response")
         return _parse_priority_field_options(payload)
 
     def _run_field_query(self, query: str, error_label: str) -> dict[str, Any]:

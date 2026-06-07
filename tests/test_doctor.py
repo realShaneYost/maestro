@@ -130,25 +130,25 @@ def test_board_reachable_fail_on_bad_payload():
     assert result.level is CheckLevel.FAIL
 
 
+def _fields_payload(nodes: list[dict[str, object]]) -> str:
+    """Render a fields-enumeration response from single-select field nodes."""
+    return json.dumps({"data": {"repositoryOwner": {"projectV2": {"fields": {"nodes": nodes}}}}})
+
+
 def test_status_columns_present_pass():
-    payload = json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {
-                        "statusField": {
-                            "options": [
-                                {"name": "Backlog"},
-                                {"name": "In Progress"},
-                                {"name": "In Review"},
-                                {"name": "Blocked"},
-                                {"name": "Done"},
-                            ]
-                        }
-                    }
-                }
+    payload = _fields_payload(
+        [
+            {
+                "name": "Status",
+                "options": [
+                    {"name": "Backlog"},
+                    {"name": "In Progress"},
+                    {"name": "In Review"},
+                    {"name": "Blocked"},
+                    {"name": "Done"},
+                ],
             }
-        }
+        ]
     )
     result = check_status_columns_present(
         _trigger(lambda _a: payload), "In Progress", "In Review", "Blocked"
@@ -157,16 +157,8 @@ def test_status_columns_present_pass():
 
 
 def test_status_columns_present_fail_when_missing():
-    payload = json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {
-                        "statusField": {"options": [{"name": "Backlog"}, {"name": "In Progress"}]}
-                    }
-                }
-            }
-        }
+    payload = _fields_payload(
+        [{"name": "Status", "options": [{"name": "Backlog"}, {"name": "In Progress"}]}]
     )
     result = check_status_columns_present(
         _trigger(lambda _a: payload), "In Progress", "In Review", "Blocked"
@@ -177,7 +169,7 @@ def test_status_columns_present_fail_when_missing():
 
 
 def test_status_columns_present_fail_when_status_field_absent():
-    payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"statusField": None}}}})
+    payload = _fields_payload([])
     result = check_status_columns_present(
         _trigger(lambda _a: payload), "In Progress", "In Review", "Blocked"
     )
@@ -185,18 +177,8 @@ def test_status_columns_present_fail_when_status_field_absent():
 
 
 def test_priority_field_present_pass():
-    payload = json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {
-                        "priorityField": {
-                            "options": [{"name": "Critical"}, {"name": "High"}],
-                        }
-                    }
-                }
-            }
-        }
+    payload = _fields_payload(
+        [{"name": "Priority", "options": [{"name": "Critical"}, {"name": "High"}]}]
     )
     result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.PASS
@@ -204,21 +186,13 @@ def test_priority_field_present_pass():
 
 
 def test_priority_field_present_fail_when_missing():
-    payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"priorityField": None}}}})
+    payload = _fields_payload([])
     result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.FAIL
 
 
 def test_priority_field_present_fail_when_no_options():
-    payload = json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {"priorityField": {"options": []}},
-                }
-            }
-        }
-    )
+    payload = _fields_payload([{"name": "Priority", "options": []}])
     result = check_priority_field_present(_trigger(lambda _a: payload))
     assert result.level is CheckLevel.FAIL
     assert "no options" in result.message
@@ -345,29 +319,26 @@ def test_run_checks_aggregates_results(tmp_path):
             }
         }
     )
-    status_payload = json.dumps(
+    fields_payload = json.dumps(
         {
             "data": {
                 "repositoryOwner": {
                     "projectV2": {
-                        "statusField": {
-                            "options": [
-                                {"name": "Backlog"},
-                                {"name": "In Progress"},
-                                {"name": "In Review"},
-                                {"name": "Blocked"},
+                        "fields": {
+                            "nodes": [
+                                {
+                                    "name": "Status",
+                                    "options": [
+                                        {"name": "Backlog"},
+                                        {"name": "In Progress"},
+                                        {"name": "In Review"},
+                                        {"name": "Blocked"},
+                                    ],
+                                },
+                                {"name": "Priority", "options": [{"name": "Critical"}]},
                             ]
                         }
                     }
-                }
-            }
-        }
-    )
-    priority_payload = json.dumps(
-        {
-            "data": {
-                "repositoryOwner": {
-                    "projectV2": {"priorityField": {"options": [{"name": "Critical"}]}}
                 }
             }
         }
@@ -378,10 +349,8 @@ def test_run_checks_aggregates_results(tmp_path):
         joined = " ".join(args)
         if "auth" in joined:
             return 0, "Token scopes: 'repo', 'project'\n", ""
-        if "statusField" in joined:
-            return 0, status_payload, ""
-        if "priorityField" in joined and "items" not in joined:
-            return 0, priority_payload, ""
+        if "fields(first" in joined:
+            return 0, fields_payload, ""
         if "projectV2" in joined:
             return 0, board_payload, ""
         if "repository" in joined:
