@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,7 +16,7 @@ from rich.console import Console
 from rich.logging import RichHandler
 
 from maestro.clean import CleanReport, clean
-from maestro.config import Config, ConfigError, load_config
+from maestro.config import Config, ConfigError, RuntimePaths, load_config, runtime_paths
 from maestro.core.scheduler import DispatchVerdict, explain_dispatch
 from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
@@ -25,11 +26,44 @@ from maestro.status import print_board_section, print_board_unreachable, render_
 from maestro.theme import ThemeError, load_theme
 from maestro.worktree import WorktreeError, WorktreeManager
 
-# Directories and files Maestro uses for runtime artifacts, relative to the
-# working directory where the command is invoked.
-_LOGS_DIR = Path("logs")
-_WORKTREES_DIR = Path("worktrees")
-_RUNS_LOG = Path("runs.jsonl")
+
+def _repo_root() -> Path:
+    """Return the git toplevel of the current working directory.
+
+    Maestro is run from inside the repository it drives; the working tree's
+    git root is that repository.
+
+    Raises:
+        ConfigError: If the current directory is not inside a git repository.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (OSError, subprocess.CalledProcessError) as err:
+        raise ConfigError(
+            "maestro must be run from inside the git repository it drives; "
+            "no git repository found at the current directory"
+        ) from err
+    return Path(result.stdout.strip())
+
+
+def _load(args: argparse.Namespace) -> tuple[Config, RuntimePaths]:
+    """Resolve the driven repo, load its config, and derive its runtime paths.
+
+    The config path defaults to ``maestro.yml`` at the repo root; ``--config``
+    overrides it (resolved relative to the current directory).
+
+    Returns:
+        The validated config and the sibling runtime-artifact paths.
+    """
+    repo_root = _repo_root()
+    config_path = Path(args.config) if args.config else repo_root / "maestro.yml"
+    config = load_config(config_path, repo_path=repo_root)
+    return config, runtime_paths(repo_root)
 
 
 def _setup_logging(console: Console) -> None:
@@ -46,26 +80,28 @@ def _trigger(config: Config) -> StatusFieldTrigger:
     return StatusFieldTrigger(config.repo_slug, config.project_number, config.trigger_column)
 
 
-def _worktree_manager(config: Config) -> WorktreeManager:
+def _worktree_manager(config: Config, paths: RuntimePaths) -> WorktreeManager:
     """Build the worktree manager for the configured target repo."""
-    return WorktreeManager(config.repo_path, _WORKTREES_DIR, worktree_setup=config.worktree_setup)
+    return WorktreeManager(
+        config.repo_path, paths.worktrees_dir, worktree_setup=config.worktree_setup
+    )
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     """Handle ``maestro run`` — the poll/dispatch loop."""
-    config = load_config(Path(args.config))
+    config, paths = _load(args)
     _setup_logging(Console(theme=load_theme(config.theme)))
-    worktrees = _worktree_manager(config)
-    Loop(config, _trigger(config), worktrees, _LOGS_DIR, _RUNS_LOG).run()
+    worktrees = _worktree_manager(config, paths)
+    Loop(config, _trigger(config), worktrees, paths.logs_dir, paths.runs_log).run()
     return 0
 
 
 def _cmd_status(args: argparse.Namespace) -> int:
     """Handle ``maestro status`` — recent worker activity, live with --watch."""
-    config = load_config(Path(args.config))
+    config, paths = _load(args)
     console = Console(theme=load_theme(config.theme))
     if args.watch:
-        watch(console, _LOGS_DIR, config.repo_slug)
+        watch(console, paths.logs_dir, config.repo_slug)
         return 0
     try:
         board = _trigger(config).poll()
@@ -79,7 +115,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             config.blocked_column,
             config.review_column,
         )
-    render_recent(console, _LOGS_DIR, config.repo_slug)
+    render_recent(console, paths.logs_dir, config.repo_slug)
     return 0
 
 
@@ -110,7 +146,7 @@ def _print_dry_run(console: Console, verdicts: list[DispatchVerdict]) -> None:
 
 def _cmd_once(args: argparse.Namespace) -> int:
     """Handle ``maestro once`` — a single poll; --dry-run dispatches nothing."""
-    config = load_config(Path(args.config))
+    config, paths = _load(args)
     console = Console(theme=load_theme(config.theme))
     trigger = _trigger(config)
     if args.dry_run:
@@ -119,8 +155,8 @@ def _cmd_once(args: argparse.Namespace) -> int:
         _print_dry_run(console, verdicts)
         return 0
     _setup_logging(console)
-    worktrees = _worktree_manager(config)
-    Loop(config, trigger, worktrees, _LOGS_DIR, _RUNS_LOG).tick()
+    worktrees = _worktree_manager(config, paths)
+    Loop(config, trigger, worktrees, paths.logs_dir, paths.runs_log).tick()
     return 0
 
 
@@ -152,7 +188,7 @@ def _print_doctor_results(console: Console, results: list[CheckResult]) -> None:
 
 def _cmd_doctor(args: argparse.Namespace) -> int:
     """Handle ``maestro doctor`` — read-only preflight checks."""
-    config = load_config(Path(args.config))
+    config, _paths = _load(args)
     console = Console(theme=load_theme(config.theme))
     results = run_checks(config)
     _print_doctor_results(console, results)
@@ -192,7 +228,7 @@ def _print_setup_report(console: Console, report: SetupReport) -> None:
 
 def _cmd_setup(args: argparse.Namespace) -> int:
     """Handle ``maestro setup`` — narrowly scoped board bootstrap."""
-    config = load_config(Path(args.config))
+    config, _paths = _load(args)
     console = Console(theme=load_theme(config.theme))
     report = run_setup(config)
     _print_setup_report(console, report)
@@ -203,12 +239,12 @@ def _cmd_setup(args: argparse.Namespace) -> int:
 
 def _cmd_clean(args: argparse.Namespace) -> int:
     """Handle ``maestro clean`` — prune worktrees, branches, and optionally logs."""
-    config = load_config(Path(args.config))
-    worktrees = _worktree_manager(config)
+    config, paths = _load(args)
+    worktrees = _worktree_manager(config, paths)
     report = clean(
         worktrees,
-        _LOGS_DIR,
-        _RUNS_LOG,
+        paths.logs_dir,
+        paths.runs_log,
         clear_logs=args.logs or args.all,
         clear_history=args.history or args.all,
     )
@@ -222,7 +258,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="maestro",
         description="Watch a GitHub Projects board and dispatch coding agents.",
     )
-    parser.add_argument("-c", "--config", default="maestro.yml", help="path to the config file")
+    parser.add_argument(
+        "-c",
+        "--config",
+        default=None,
+        help="path to the config file (default: maestro.yml at the repo root)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     run = sub.add_parser("run", help="run the poll/dispatch loop")

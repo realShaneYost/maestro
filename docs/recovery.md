@@ -36,4 +36,4 @@ You never *have* to: re-dropping a card into the trigger column is enough, becau
 - `maestro clean --history` — also truncate `runs.jsonl`.
 - `maestro clean --all` — everything.
 
-`runs.jsonl` and `logs/` are your audit trail; the default `clean` leaves them untouched so a routine cleanup never discards history by surprise.
+`runs.jsonl` and the logs directory — both under the sibling `../<repo>.maestro/` — are your audit trail; the default `clean` leaves them untouched so a routine cleanup never discards history by surprise.

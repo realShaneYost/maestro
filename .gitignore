@@ -15,9 +15,12 @@ dist/
 .coverage
 htmlcov/
 
-# Maestro runtime artifacts (the live config holds local paths; example is committed)
+# Maestro is now run from inside each driven repo: its config (maestro.yml) and
+# runtime artifacts (worktrees, logs, runs.jsonl) live with the driven repo and
+# in a sibling <repo>.maestro/ dir — never here. maestro.example.yml is the
+# committed template. The lines below catch stale artifacts from the old layout.
 maestro.yml
-astromech.yml
+*.maestro/
 logs/
 worktrees/
 runs.jsonl

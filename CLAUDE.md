@@ -27,6 +27,10 @@ Maestro is deliberately a plain program, not a long-running AI session. It was c
    self-explaining `--dry-run`, board summary in `maestro status`,
    `maestro doctor`, `maestro setup`, and stale-worktree auto-discard on
    dispatch. *(done)*
+10. Run-from-repo model — Maestro is installed once (pipx/uv tool) and run
+    from inside each driven repo. `repo_path` is inferred from the git root,
+    so `maestro.yml` holds only board facts and is committed to the repo;
+    runtime artifacts live in a sibling `../<repo>.maestro/` directory. *(done)*
 
 See `docs/architecture.md` for the full design.
 
@@ -101,7 +105,7 @@ These are hard rules. Code that breaks one is a regression and must be rejected 
 2. **`core/` never does screen I/O.** Core functions return data; the CLI and any future TUI are thin renderers over `core`. This is what keeps a TUI a cheap future add.
 3. **The scheduler is pure, deterministic code — no language model, ever.** It reads structured inputs (trigger-column membership, declared blockers, priority) and returns a dispatch list. The reasoning was already spent when the issue was written.
 4. **Workers are stateless and isolated.** Each runs one issue in its own worktree, knows nothing of sibling workers, and exits after opening its PR. All durable state lives in GitHub; re-dispatch (rework, resume-after-blocked) is just the card re-entering the trigger column.
-5. **Logs live outside worktrees.** `logs/issue-N.log` and `runs.jsonl` persist as the audit trail; worktree removal never touches them.
+5. **Logs live outside worktrees.** Per-issue logs and `runs.jsonl` live in the sibling `../<repo>.maestro/` directory and persist as the audit trail; worktree removal never touches them.
 6. **`status --watch` is read-only.** It renders state; it never controls the loop.
 
 ## Worker Contract

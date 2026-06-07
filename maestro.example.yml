@@ -1,12 +1,12 @@
-# Maestro configuration. Copy this file to maestro.yml and edit.
-# maestro.yml is gitignored; this example is committed.
+# Maestro configuration. Copy this file to maestro.yml at the root of the
+# repository Maestro should drive, then edit. Maestro is run from inside that
+# repo and infers the repo path from the git root, so this file holds only board
+# facts (no machine-specific paths) and is meant to be committed to the repo.
+# Runtime artifacts live in a sibling <repo>.maestro/ dir, never in the repo.
 
 # --- Required ---
 
-# Absolute path to the git repository Maestro drives.
-repo_path: "/Users/you/__repos/your-project"
-
-# GitHub "owner/name" slug for that repository.
+# GitHub "owner/name" slug for the repository this config lives in.
 repo_slug: "your-org/your-project"
 
 # GitHub Projects V2 board number to poll.
@@ -38,8 +38,8 @@ worker_prompt: "/cc-work {issue}"
 theme: "nord"
 
 # Shell command run inside each fresh worktree to provision its environment
-# (typically an isolated virtualenv). When unset, the target repo's .venv is
-# symlinked in instead -- but that venv's editable install points back at the
-# primary repo, so a worker's tests would run against the wrong code. Set this
-# for any repo whose workers change Python code. Example (requires uv):
+# (typically an isolated virtualenv). When unset, the repo's .venv is symlinked
+# in instead -- but that venv's editable install points back at the primary
+# checkout, so a worker's tests would run against the wrong code. Set this for
+# any repo whose workers change Python code. Example (requires uv):
 # worktree_setup: "uv venv .venv && uv pip install -e '.[dev]'"
