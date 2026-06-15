@@ -104,6 +104,14 @@ maestro clean               # prune finished worktrees and stale branches
 
 Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup and recovery are both in [`docs/usage.md`](docs/usage.md); the design is in [`docs/how-it-works.md`](docs/how-it-works.md).
 
+## Continuous integration (optional)
+
+CI is an opt-in enhancement, not a requirement. Maestro is fully functional without it: workers open PRs, rework them off human review, and move their cards whether or not any checks run. The one thing CI buys you is an **automated rework signal** — when a worker's PR fails its checks, the worker's rework mode picks up the failures on the next dispatch and fixes them, on top of the human review it already responds to.
+
+Because of that, CI ships **disabled by default**, gated behind the `manage_ci` key in `maestro.yml`. An unconfigured generic pipeline is worse than none: an enabled-but-empty workflow either lies green (false confidence) or reds every PR (a false rework loop), and both poison the very signal CI exists to provide. So enabling it is a deliberate act you take once a real test command is in place.
+
+To enable it, set `manage_ci: true` and run `maestro setup`. Setup writes a minimal, language-agnostic skeleton to `.github/workflows/maestro-ci.yml` (you commit it) and never overwrites an existing file. The skeleton triggers on `workflow_dispatch` **only**, so it never auto-fires until you replace its placeholder step with your project's real build/test command and add the `pull_request:` / `push:` triggers you want — the file's header comment walks through both. With `manage_ci` left at its default `false`, `maestro setup` writes nothing and the repo is untouched; `maestro doctor` notes the present-but-disabled state with a one-line enable hint.
+
 ## Ordering dependent issues
 
 Maestro dispatches every ready card in the trigger column in parallel. When one issue must land before another — issue #38 builds on a module issue #37 creates — you **must** declare the ordering as GitHub's native **"blocked by"** relationship. Maestro reads only that relationship; a dependency written as body text, a task-list reference, or a `Blocked by #37` line in the issue body is invisible to it, and both cards will be dispatched at once. Two workers then race on the same files and collide in a merge conflict.

@@ -39,6 +39,22 @@ PACKAGE_ROOT = Path(__file__).resolve().parent.parent
 # default path.
 WORKER_SKILL = "worker skill"
 
+# Stable name of the CI-workflow dependency. The manifest entry below models the
+# *directory* presence (does the repo carry any GitHub Actions workflow); the
+# helpers further down model the *specific* opt-in skeleton ``maestro setup``
+# materializes when ``manage_ci`` is on. ``maestro doctor`` special-cases this
+# name so it reports the managed-skeleton state instead of bare directory
+# presence.
+CI_WORKFLOW = "CI workflow"
+
+# The optional CI skeleton Maestro can materialize. It is deliberately kept off
+# the manifest entry's ``template`` (which stays ``None``) so ``maestro update``
+# treats CI as a no-template, non-noisy dependency: an unconfigured repo that has
+# opted out of CI should never be nagged about a "missing" workflow. The filename
+# is namespaced so writing it never clobbers a workflow the user already keeps.
+CI_WORKFLOW_TEMPLATE = "templates/ci-workflow.yml"
+CI_WORKFLOW_FILENAME = "maestro-ci.yml"
+
 
 @dataclass(frozen=True)
 class Dependency:
@@ -132,7 +148,7 @@ MANIFEST: tuple[Dependency, ...] = (
         template="maestro.example.yml",
     ),
     Dependency(
-        name="CI workflow",
+        name=CI_WORKFLOW,
         description=(
             "Optional GitHub Actions workflow that runs the quality gate on "
             "worker PRs. GitHub only runs workflows from this directory."
@@ -143,6 +159,49 @@ MANIFEST: tuple[Dependency, ...] = (
         template=None,
     ),
 )
+
+
+def ci_template_path(package_root: Path = PACKAGE_ROOT) -> Path:
+    """Return the absolute path to the packaged CI skeleton template.
+
+    Args:
+        package_root: Root the template path is resolved against; defaults to
+            :data:`PACKAGE_ROOT`. Injectable for tests.
+
+    Returns:
+        The resolved template path. It is not guaranteed to exist on disk — a
+        plain wheel install does not yet bundle the templates.
+    """
+    return package_root / CI_WORKFLOW_TEMPLATE
+
+
+def ci_workflow_destination(repo_path: Path) -> Path:
+    """Return where ``maestro setup`` materializes the CI skeleton in a repo.
+
+    Args:
+        repo_path: Root of the driven repository.
+
+    Returns:
+        ``<repo_path>/.github/workflows/<CI_WORKFLOW_FILENAME>`` — the namespaced
+        file that ``maestro setup`` writes when ``manage_ci`` is enabled.
+    """
+    return repo_path / ".github" / "workflows" / CI_WORKFLOW_FILENAME
+
+
+def read_ci_template(package_root: Path = PACKAGE_ROOT) -> str:
+    """Read the packaged CI skeleton template's text.
+
+    Args:
+        package_root: Root the template path is resolved against; defaults to
+            :data:`PACKAGE_ROOT`. Injectable for tests.
+
+    Returns:
+        The template's text content.
+
+    Raises:
+        OSError: If the template path does not exist or cannot be read.
+    """
+    return ci_template_path(package_root).read_text(encoding="utf-8")
 
 
 def read_template(dependency: Dependency, package_root: Path = PACKAGE_ROOT) -> str:

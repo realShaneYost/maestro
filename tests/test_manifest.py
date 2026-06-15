@@ -4,7 +4,17 @@ from __future__ import annotations
 
 import pytest
 
-from maestro.manifest import MANIFEST, PACKAGE_ROOT, WORKER_SKILL, Dependency, read_template
+from maestro.manifest import (
+    CI_WORKFLOW_FILENAME,
+    MANIFEST,
+    PACKAGE_ROOT,
+    WORKER_SKILL,
+    Dependency,
+    ci_template_path,
+    ci_workflow_destination,
+    read_ci_template,
+    read_template,
+)
 
 
 def test_manifest_enumerates_the_three_locations():
@@ -82,3 +92,21 @@ def test_read_template_raises_without_template():
 def test_package_root_holds_the_templates():
     assert (PACKAGE_ROOT / "templates" / "worker-skill.md").is_file()
     assert (PACKAGE_ROOT / "maestro.example.yml").is_file()
+
+
+def test_ci_template_ships_and_is_manual_only():
+    assert ci_template_path().is_file()
+    content = read_ci_template()
+    active = [ln for ln in content.splitlines() if ln.strip() and not ln.lstrip().startswith("#")]
+    assert any("workflow_dispatch" in ln for ln in active)
+    assert not any("pull_request" in ln or "push:" in ln for ln in active)
+
+
+def test_ci_workflow_destination_is_namespaced(tmp_path):
+    dest = ci_workflow_destination(tmp_path)
+    assert dest == tmp_path / ".github" / "workflows" / CI_WORKFLOW_FILENAME
+
+
+def test_read_ci_template_raises_when_missing(tmp_path):
+    with pytest.raises(OSError):
+        read_ci_template(tmp_path / "no-such-package")

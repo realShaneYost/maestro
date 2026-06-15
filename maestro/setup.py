@@ -14,6 +14,7 @@ The setup is idempotent: a second run mutates nothing and reports it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from maestro.config import Config
 from maestro.doctor import (
@@ -25,6 +26,7 @@ from maestro.doctor import (
 )
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.install import InstallInfo, detect_install
+from maestro.manifest import PACKAGE_ROOT, ci_workflow_destination, read_ci_template
 
 
 @dataclass
@@ -39,6 +41,11 @@ class SetupReport:
         priority_already_present: Whether the Priority field was already present.
         status_missing: Status-field options the operator must add by hand.
         status_present: Whether all configured Status columns are present.
+        ci_managed: Whether ``manage_ci`` is enabled for this repo.
+        ci_written: Whether the CI workflow was newly written this run.
+        ci_already_present: Whether the CI workflow file already existed and was
+            left untouched.
+        ci_error: A message when materializing the CI workflow failed.
     """
 
     install: InstallInfo | None = None
@@ -47,6 +54,10 @@ class SetupReport:
     priority_already_present: bool = False
     status_missing: list[str] = field(default_factory=list)
     status_present: bool = False
+    ci_managed: bool = False
+    ci_written: bool = False
+    ci_already_present: bool = False
+    ci_error: str | None = None
 
 
 def _build_trigger(config: Config, gh: GhRunner) -> StatusFieldTrigger:
@@ -69,18 +80,56 @@ def _build_trigger(config: Config, gh: GhRunner) -> StatusFieldTrigger:
 _PRIORITY_OPTIONS = ("Critical", "High", "Normal", "Low")
 
 
-def run_setup(config: Config, *, gh_runner: GhRunner = _run_gh) -> SetupReport:
+def _materialize_ci(config: Config, report: SetupReport, package_root: Path) -> None:
+    """Write the CI skeleton into the repo when ``manage_ci`` is enabled.
+
+    A no-op when ``manage_ci`` is off (the default) — the repo is left untouched.
+    When on, the namespaced workflow is written only if absent, so a second run
+    mutates nothing; an existing file (the user's edits) is never overwritten.
+
+    Args:
+        config: Loaded Maestro configuration.
+        report: The report mutated in place with the outcome.
+        package_root: Root the CI template is resolved against.
+    """
+    report.ci_managed = config.manage_ci
+    if not config.manage_ci:
+        return
+    dest = ci_workflow_destination(config.repo_path)
+    if dest.exists():
+        report.ci_already_present = True
+        return
+    try:
+        content = read_ci_template(package_root)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_text(content, encoding="utf-8")
+    except OSError as err:
+        report.ci_error = str(err)
+        return
+    report.ci_written = True
+
+
+def run_setup(
+    config: Config, *, gh_runner: GhRunner = _run_gh, package_root: Path = PACKAGE_ROOT
+) -> SetupReport:
     """Bootstrap the board's Priority field and verify Status columns.
+
+    Materializing the optional CI workflow is filesystem-only, so it happens
+    first and independently of the board work below — a gh outage that aborts the
+    board bootstrap still leaves the requested workflow in place.
 
     Args:
         config: Loaded Maestro configuration.
         gh_runner: Callable that runs gh; injectable for tests.
+        package_root: Root the CI template is resolved against; defaults to the
+            installed package. Injectable for tests.
 
     Returns:
         A :class:`SetupReport` describing the actions taken and any manual
         follow-ups required.
     """
     report = SetupReport(install=detect_install())
+    _materialize_ci(config, report, package_root)
 
     auth = check_gh_auth(gh_runner)
     if auth.level is CheckLevel.FAIL:

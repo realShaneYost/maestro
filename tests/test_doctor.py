@@ -12,6 +12,7 @@ from maestro.doctor import (
     CheckLevel,
     check_board_reachable,
     check_board_size,
+    check_ci_template,
     check_dependency,
     check_gh_auth,
     check_gh_project_scope,
@@ -24,7 +25,7 @@ from maestro.doctor import (
     run_checks,
 )
 from maestro.github import StatusFieldTrigger
-from maestro.manifest import Dependency
+from maestro.manifest import CI_WORKFLOW, Dependency, ci_workflow_destination
 
 
 def _gh_ok(stdout: str = "", stderr: str = ""):
@@ -269,6 +270,34 @@ def test_check_dependency_directory_warns_when_empty(tmp_path):
     (tmp_path / "sub" / "dir").mkdir(parents=True)
     result = check_dependency(_dep(required=False, is_directory=True), tmp_path)
     assert result.level is CheckLevel.WARN
+
+
+def test_check_ci_template_disabled_warns_with_enable_hint(tmp_path):
+    result = check_ci_template(tmp_path, manage_ci=False)
+    assert result.name == CI_WORKFLOW
+    assert result.level is CheckLevel.WARN
+    assert "manage_ci: true" in result.message
+    assert "maestro setup" in result.message
+
+
+def test_check_ci_template_enabled_and_present_passes(tmp_path):
+    dest = ci_workflow_destination(tmp_path)
+    dest.parent.mkdir(parents=True)
+    dest.write_text("name: CI\n", encoding="utf-8")
+    result = check_ci_template(tmp_path, manage_ci=True)
+    assert result.level is CheckLevel.PASS
+
+
+def test_check_ci_template_enabled_but_missing_warns(tmp_path):
+    result = check_ci_template(tmp_path, manage_ci=True)
+    assert result.level is CheckLevel.WARN
+    assert "maestro setup" in result.message
+
+
+def test_check_ci_template_enabled_but_template_unavailable_warns(tmp_path):
+    result = check_ci_template(tmp_path, manage_ci=True, package_root=tmp_path / "absent")
+    assert result.level is CheckLevel.WARN
+    assert "template" in result.message
 
 
 def test_python_repo_needs_worktree_setup_warn(tmp_path):

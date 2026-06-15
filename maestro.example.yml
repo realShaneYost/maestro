@@ -43,3 +43,12 @@ theme: "nord"
 # checkout, so a worker's tests would run against the wrong code. Set this for
 # any repo whose workers change Python code. Example (requires uv):
 # worktree_setup: "uv venv .venv && uv pip install -e '.[dev]'"
+
+# Whether `maestro setup` materializes the optional CI workflow skeleton into
+# .github/workflows/maestro-ci.yml (you then commit it). CI is not required:
+# workers open and rework PRs with or without it. Its only payoff is giving the
+# worker an automated rework signal (failed checks) on top of human review. The
+# shipped skeleton is manual-only (workflow_dispatch) until you wire in a real
+# test command, so leave this off until you have one -- an unconfigured pipeline
+# either lies green or reds every PR, and both poison the rework signal.
+manage_ci: false

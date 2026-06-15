@@ -24,6 +24,7 @@ _DEFAULTS: dict[str, Any] = {
     "worktree_setup": None,
     "review_column": "In Review",
     "blocked_column": "Blocked",
+    "manage_ci": False,
 }
 
 
@@ -54,6 +55,11 @@ class Config:
         blocked_column: Status-field value a worker parks its card in when it
             cannot proceed. Reaching this column is how Maestro classifies a
             run as ``blocked``.
+        manage_ci: Whether ``maestro setup`` materializes the optional CI
+            workflow skeleton into ``.github/workflows/``. Off by default: CI is
+            an opt-in enhancement that only adds the worker's automated rework
+            signal, and an unconfigured pipeline would poison that signal, so
+            enabling it is a deliberate act once a real test command is in place.
     """
 
     repo_path: Path
@@ -67,6 +73,7 @@ class Config:
     worktree_setup: str | None
     review_column: str
     blocked_column: str
+    manage_ci: bool = False
 
 
 def load_config(path: Path, *, repo_path: Path) -> Config:
@@ -156,6 +163,7 @@ def _build_config(values: dict[str, Any]) -> Config:
         worktree_setup=worktree_setup,
         review_column=review_column,
         blocked_column=blocked_column,
+        manage_ci=_bool(values, "manage_ci"),
     )
 
 
@@ -166,6 +174,19 @@ def _positive_int(values: dict[str, Any], key: str) -> int:
         raise ConfigError(f"{key} must be an integer: {raw!r}")
     if raw <= 0:
         raise ConfigError(f"{key} must be a positive integer: {raw}")
+    return raw
+
+
+def _bool(values: dict[str, Any], key: str) -> bool:
+    """Return ``values[key]`` as a bool or raise :class:`ConfigError`.
+
+    YAML parses bare ``true``/``false`` to Python booleans; a string such as
+    ``"false"`` would coerce to ``True`` under ``bool(...)``, so the type is
+    validated rather than coerced to keep the default-off invariant honest.
+    """
+    raw = values[key]
+    if not isinstance(raw, bool):
+        raise ConfigError(f"{key} must be a boolean: {raw!r}")
     return raw
 
 

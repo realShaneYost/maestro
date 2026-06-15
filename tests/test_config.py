@@ -34,6 +34,19 @@ def test_loads_minimal_config_and_applies_defaults(tmp_path):
     assert config.worktree_setup is None
     assert config.review_column == "In Review"
     assert config.blocked_column == "Blocked"
+    assert config.manage_ci is False
+
+
+def test_manage_ci_defaults_off_and_accepts_true(tmp_path):
+    assert load_config(_write(tmp_path, _MINIMAL), repo_path=tmp_path).manage_ci is False
+    body = _MINIMAL + "manage_ci: true\n"
+    assert load_config(_write(tmp_path, body), repo_path=tmp_path).manage_ci is True
+
+
+def test_manage_ci_must_be_boolean(tmp_path):
+    body = _MINIMAL + 'manage_ci: "yes"\n'
+    with pytest.raises(ConfigError, match="manage_ci must be a boolean"):
+        load_config(_write(tmp_path, body), repo_path=tmp_path)
 
 
 def test_repo_path_in_file_is_ignored_in_favour_of_caller(tmp_path):
