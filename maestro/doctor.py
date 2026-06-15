@@ -20,6 +20,7 @@ from pathlib import Path
 
 from maestro.config import Config
 from maestro.github import GitHubError, StatusFieldTrigger
+from maestro.install import detect_install
 
 
 class CheckLevel(enum.Enum):
@@ -65,6 +66,18 @@ def _run_gh(args: list[str]) -> tuple[int, str, str]:
     except OSError as err:
         return 1, "", str(err)
     return result.returncode, result.stdout, result.stderr
+
+
+def check_install() -> CheckResult:
+    """Report Maestro's version and whether it runs from an isolated tool install.
+
+    PASS when Maestro runs from a uv tool or pipx install; WARN when it runs
+    from a source checkout or an unrecognized location, so the operator is
+    never confused about which Maestro they are running.
+    """
+    info = detect_install()
+    level = CheckLevel.PASS if info.is_isolated_tool else CheckLevel.WARN
+    return CheckResult("install", level, info.summary)
 
 
 def check_gh_auth(runner: GhRunner) -> CheckResult:
@@ -306,6 +319,7 @@ def run_checks(
         )
 
     results: list[CheckResult] = []
+    results.append(check_install())
     results.append(check_gh_auth(gh_runner))
     results.append(check_gh_project_scope(gh_runner))
     results.append(check_repo_is_git_with_origin(config.repo_path, git_runner))

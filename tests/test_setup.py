@@ -108,6 +108,27 @@ def test_setup_is_idempotent(tmp_path):
     assert len(created) == 1
 
 
+def test_setup_reports_install_info(tmp_path):
+    runner, _created = _make_runner(
+        status=["Backlog", "In Progress", "In Review", "Blocked"],
+        priority_options=["Critical"],
+    )
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.install is not None
+    assert "maestro" in report.install.summary
+
+
+def test_setup_reports_install_info_even_when_aborted(tmp_path):
+    def runner(args):
+        if args[:2] == ["auth", "status"]:
+            return 1, "", "not logged in\n"
+        return 0, "", ""
+
+    report = run_setup(_config(tmp_path), gh_runner=runner)
+    assert report.aborted is not None
+    assert report.install is not None
+
+
 def test_setup_aborts_when_gh_auth_fails(tmp_path):
     def runner(args):
         if args[:2] == ["auth", "status"]:

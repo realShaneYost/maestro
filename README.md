@@ -15,6 +15,8 @@ Watches a GitHub Projects board and dispatches coding agents to work issues auto
 ## Requirements
 
 - Python 3.11+
+- [`uv`](https://docs.astral.sh/uv/) (or [`pipx`](https://pipx.pypa.io/)) to install Maestro
+- [`gh`](https://cli.github.com/), authenticated (`gh auth login`)
 - [`gh`](https://cli.github.com/), authenticated with the `project` scope (see Prerequisites below)
 - `git`
 - A coding-agent CLI on your `PATH` (e.g. `claude`)
@@ -47,12 +49,18 @@ Maestro dispatches each worker as a headless `claude -p` process started with `-
 
 ## Install
 
-Maestro is a standalone tool — install it once, then run it from inside any repo you want it to drive. Use [`pipx`](https://pipx.pypa.io/) (or [`uv tool`](https://docs.astral.sh/uv/)) so it lives in its own isolated environment and never pollutes a project's dependencies:
+Maestro is a standalone tool — install it once, then run it from inside any repo you want it to drive:
 
 ```
-pipx install git+https://github.com/realShaneYost/maestro
-# or, for local development from a clone:
-git clone <this-repo> && cd maestro && uv tool install .
+uv tool install git+https://github.com/realShaneYost/maestro
+```
+
+That puts `maestro` on your `PATH` in its own isolated environment, so it never pollutes a project's dependencies. (Prefer pipx? `pipx install git+https://github.com/realShaneYost/maestro` works the same way. For local development from a clone, `uv tool install .` inside it.)
+
+Confirm the install — `maestro doctor` reports the version and whether you are running the installed tool or a source checkout:
+
+```
+maestro doctor
 ```
 
 ## Configure

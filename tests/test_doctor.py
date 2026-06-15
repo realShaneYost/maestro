@@ -14,6 +14,7 @@ from maestro.doctor import (
     check_board_size,
     check_gh_auth,
     check_gh_project_scope,
+    check_install,
     check_priority_field_present,
     check_python_repo_needs_worktree_setup,
     check_repo_is_git_with_origin,
@@ -316,6 +317,13 @@ def _config(tmp_path: Path) -> Config:
     )
 
 
+def test_check_install_reports_version_and_source():
+    result = check_install()
+    assert result.name == "install"
+    assert result.level in (CheckLevel.PASS, CheckLevel.WARN)
+    assert "maestro" in result.message
+
+
 def test_run_checks_aggregates_results(tmp_path):
     config = _config(tmp_path)
     board_payload = json.dumps(
@@ -378,6 +386,7 @@ def test_run_checks_aggregates_results(tmp_path):
 
     results = run_checks(config, gh_runner=gh, git_runner=git)
     names = [r.name for r in results]
+    assert "install" in names
     assert "gh auth" in names
     assert "gh project scope" in names
     assert "board reachable" in names
