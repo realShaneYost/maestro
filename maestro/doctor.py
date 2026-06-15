@@ -21,7 +21,15 @@ from pathlib import Path
 from maestro.config import Config
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.install import detect_install
-from maestro.manifest import MANIFEST, WORKER_SKILL, Dependency
+from maestro.manifest import (
+    CI_WORKFLOW,
+    MANIFEST,
+    PACKAGE_ROOT,
+    WORKER_SKILL,
+    Dependency,
+    ci_template_path,
+    ci_workflow_destination,
+)
 
 
 class CheckLevel(enum.Enum):
@@ -267,6 +275,54 @@ def check_dependency(dependency: Dependency, repo_path: Path) -> CheckResult:
     )
 
 
+def check_ci_template(
+    repo_path: Path, manage_ci: bool, package_root: Path = PACKAGE_ROOT
+) -> CheckResult:
+    """Report the optional CI skeleton's managed state, with an enable hint.
+
+    CI is an opt-in enhancement: its only payoff is the worker's automated rework
+    signal (failed checks) on top of human review. The skeleton therefore ships
+    disabled. This check surfaces that present-but-disabled state so an operator
+    knows the template exists and how to turn it on, WARNs when it is enabled but
+    not yet installed, and PASSes once the managed workflow is in place.
+
+    Args:
+        repo_path: Root of the driven repository.
+        manage_ci: Whether ``manage_ci`` is enabled in the config.
+        package_root: Root the CI template is resolved against; injectable for
+            tests.
+
+    Returns:
+        A :class:`CheckResult` named after the CI-workflow dependency.
+    """
+    if not manage_ci:
+        return CheckResult(
+            CI_WORKFLOW,
+            CheckLevel.WARN,
+            "optional CI template available but disabled; enable it by setting "
+            "manage_ci: true in maestro.yml and running maestro setup",
+        )
+    destination = ci_workflow_destination(repo_path)
+    if destination.is_file():
+        return CheckResult(
+            CI_WORKFLOW,
+            CheckLevel.PASS,
+            f"managed; workflow present at {destination.relative_to(repo_path)}",
+        )
+    if not ci_template_path(package_root).is_file():
+        return CheckResult(
+            CI_WORKFLOW,
+            CheckLevel.WARN,
+            "manage_ci is on but the packaged CI template is unavailable; "
+            "reinstall Maestro from source to materialize it",
+        )
+    return CheckResult(
+        CI_WORKFLOW,
+        CheckLevel.WARN,
+        "manage_ci is on but the workflow is not installed yet; run maestro setup",
+    )
+
+
 def check_python_repo_needs_worktree_setup(
     repo_path: Path, worktree_setup: str | None
 ) -> CheckResult | None:
@@ -363,6 +419,10 @@ def run_checks(
     for dependency in MANIFEST:
         if dependency.name == WORKER_SKILL:
             results.append(check_worker_skill_present(config.repo_path, config.worker_prompt))
+        elif dependency.name == CI_WORKFLOW:
+            # CI is an opt-in skeleton gated by manage_ci, not a bare directory
+            # presence check — report the managed state and the enable hint.
+            results.append(check_ci_template(config.repo_path, config.manage_ci))
         else:
             results.append(check_dependency(dependency, config.repo_path))
     py = check_python_repo_needs_worktree_setup(config.repo_path, config.worktree_setup)

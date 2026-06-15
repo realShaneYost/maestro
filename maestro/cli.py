@@ -21,6 +21,7 @@ from maestro.core.scheduler import DispatchVerdict, blocked_by_reason, explain_d
 from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.loop import Loop
+from maestro.manifest import CI_WORKFLOW_FILENAME
 from maestro.setup import SetupReport, run_setup
 from maestro.status import print_board_section, print_board_unreachable, render_recent, watch
 from maestro.theme import ThemeError, load_theme
@@ -215,10 +216,27 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
+def _print_ci_setup(console: Console, report: SetupReport) -> None:
+    """Render the CI-workflow outcome of a setup run."""
+    workflow = f".github/workflows/{CI_WORKFLOW_FILENAME}"
+    if not report.ci_managed:
+        console.print("CI management is off (manage_ci: false); no workflow written.")
+    elif report.ci_error:
+        console.print(f"[error]Could not write CI workflow:[/error] {report.ci_error}")
+    elif report.ci_written:
+        console.print(
+            f"Wrote CI skeleton to [issue]{workflow}[/issue]; commit it and configure a "
+            "real test command to enable the worker's rework signal."
+        )
+    elif report.ci_already_present:
+        console.print(f"CI workflow already present at [issue]{workflow}[/issue]; left untouched.")
+
+
 def _print_setup_report(console: Console, report: SetupReport) -> None:
     """Render the setup report to the console."""
     if report.install is not None:
         console.print(f"[message]{report.install.summary}[/message]")
+    _print_ci_setup(console, report)
     if report.aborted:
         console.print(f"[error]Setup aborted:[/error] {report.aborted}")
         return
@@ -251,7 +269,7 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     console = Console(theme=load_theme(config.theme))
     report = run_setup(config)
     _print_setup_report(console, report)
-    if report.aborted or not report.status_present:
+    if report.aborted or report.ci_error or not report.status_present:
         return 1
     return 0
 

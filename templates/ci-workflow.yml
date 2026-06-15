@@ -1,0 +1,47 @@
+# Maestro CI skeleton — optional, language-agnostic, disabled until configured.
+#
+# CI is NOT required for Maestro to work: workers open PRs, rework them off human
+# review, and move cards with or without it. CI's only job is to give the worker
+# an *automated* rework signal (failed checks) on top of human review.
+#
+# This skeleton ships with `workflow_dispatch` as its ONLY trigger, so it never
+# fires on a push or pull request until you wire in a real test command. An
+# enabled-but-empty pipeline would either lie green (false confidence) or red
+# every PR (a false rework loop) — both poison the rework signal, so the gate
+# stays manual until you have configured a genuine command below.
+#
+# To turn this into a working gate:
+#   1. Replace the placeholder step with your project's real build/test command.
+#   2. Add the triggers you want it to run on, e.g.
+#        on:
+#          pull_request:
+#            branches: [main]
+#          push:
+#            branches: [main]
+#   3. Commit the change. The worker's rework mode then picks up failed checks
+#      automatically on the next push.
+
+name: CI
+
+on:
+  # Manual-only until configured. Add `pull_request:` / `push:` triggers here
+  # once the step below runs your real suite — see the header comment.
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      # TODO: replace this placeholder with your project's real test command, e.g.
+      #   - Python: pip install -e '.[dev]' && pytest
+      #   - Node:   npm ci && npm test
+      #   - Go:     go test ./...
+      #   - Rust:   cargo test
+      - name: Run tests (placeholder — configure me)
+        run: |
+          echo "TODO: configure a real test command for this repository."
+          echo "Until then this workflow is a manual-only no-op; see the comments"
+          echo "at the top of .github/workflows/maestro-ci.yml."
