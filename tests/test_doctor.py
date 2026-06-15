@@ -12,6 +12,7 @@ from maestro.doctor import (
     CheckLevel,
     check_board_reachable,
     check_board_size,
+    check_dependency,
     check_gh_auth,
     check_gh_project_scope,
     check_install,
@@ -23,6 +24,7 @@ from maestro.doctor import (
     run_checks,
 )
 from maestro.github import StatusFieldTrigger
+from maestro.manifest import Dependency
 
 
 def _gh_ok(stdout: str = "", stderr: str = ""):
@@ -225,6 +227,50 @@ def test_worker_skill_present_pass_when_file_exists(tmp_path):
     assert result.level is CheckLevel.PASS
 
 
+def _dep(required: bool, is_directory: bool = False) -> Dependency:
+    return Dependency(
+        name="thing",
+        description="a test dependency",
+        location="sub/dir" if is_directory else "file.txt",
+        is_directory=is_directory,
+        required=required,
+        template=None,
+    )
+
+
+def test_check_dependency_pass_when_file_present(tmp_path):
+    (tmp_path / "file.txt").write_text("x", encoding="utf-8")
+    result = check_dependency(_dep(required=True), tmp_path)
+    assert result.level is CheckLevel.PASS
+    assert "file.txt" in result.message
+
+
+def test_check_dependency_required_missing_fails(tmp_path):
+    result = check_dependency(_dep(required=True), tmp_path)
+    assert result.level is CheckLevel.FAIL
+    assert "required" in result.message
+
+
+def test_check_dependency_optional_missing_warns(tmp_path):
+    result = check_dependency(_dep(required=False), tmp_path)
+    assert result.level is CheckLevel.WARN
+    assert "optional" in result.message
+
+
+def test_check_dependency_directory_present_when_non_empty(tmp_path):
+    sub = tmp_path / "sub" / "dir"
+    sub.mkdir(parents=True)
+    (sub / "workflow.yml").write_text("on: push", encoding="utf-8")
+    result = check_dependency(_dep(required=False, is_directory=True), tmp_path)
+    assert result.level is CheckLevel.PASS
+
+
+def test_check_dependency_directory_warns_when_empty(tmp_path):
+    (tmp_path / "sub" / "dir").mkdir(parents=True)
+    result = check_dependency(_dep(required=False, is_directory=True), tmp_path)
+    assert result.level is CheckLevel.WARN
+
+
 def test_python_repo_needs_worktree_setup_warn(tmp_path):
     (tmp_path / "pyproject.toml").write_text("", encoding="utf-8")
     result = check_python_repo_needs_worktree_setup(tmp_path, None)
@@ -326,6 +372,9 @@ def test_check_install_reports_version_and_source():
 
 def test_run_checks_aggregates_results(tmp_path):
     config = _config(tmp_path)
+    # A required manifest dependency (maestro.yml) must be present, or run_checks
+    # would surface a FAIL and break the happy-path assertion below.
+    (tmp_path / "maestro.yml").write_text("", encoding="utf-8")
     board_payload = json.dumps(
         {
             "data": {
@@ -393,5 +442,7 @@ def test_run_checks_aggregates_results(tmp_path):
     assert "status columns" in names
     assert "priority field" in names
     assert "worker skill" in names
+    assert "config" in names
+    assert "CI workflow" in names
     # No FAILs in this happy path:
     assert not [r for r in results if r.level is CheckLevel.FAIL]
