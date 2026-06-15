@@ -200,6 +200,8 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
 
 def _print_setup_report(console: Console, report: SetupReport) -> None:
     """Render the setup report to the console."""
+    if report.install is not None:
+        console.print(f"[message]{report.install.summary}[/message]")
     if report.aborted:
         console.print(f"[error]Setup aborted:[/error] {report.aborted}")
         return

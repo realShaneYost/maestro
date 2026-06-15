@@ -24,6 +24,7 @@ from maestro.doctor import (
     check_gh_project_scope,
 )
 from maestro.github import GitHubError, StatusFieldTrigger
+from maestro.install import InstallInfo, detect_install
 
 
 @dataclass
@@ -31,6 +32,8 @@ class SetupReport:
     """A summary of what ``maestro setup`` did.
 
     Attributes:
+        install: How the running Maestro was installed; populated every run so
+            the operator can confirm version and install source.
         aborted: A reason string when setup bailed out before making changes.
         priority_created: Whether the Priority field was created this run.
         priority_already_present: Whether the Priority field was already present.
@@ -38,6 +41,7 @@ class SetupReport:
         status_present: Whether all configured Status columns are present.
     """
 
+    install: InstallInfo | None = None
     aborted: str | None = None
     priority_created: bool = False
     priority_already_present: bool = False
@@ -76,7 +80,7 @@ def run_setup(config: Config, *, gh_runner: GhRunner = _run_gh) -> SetupReport:
         A :class:`SetupReport` describing the actions taken and any manual
         follow-ups required.
     """
-    report = SetupReport()
+    report = SetupReport(install=detect_install())
 
     auth = check_gh_auth(gh_runner)
     if auth.level is CheckLevel.FAIL:
