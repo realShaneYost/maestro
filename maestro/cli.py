@@ -1,7 +1,8 @@
 """Command-line entry point for Maestro.
 
 This module wires up argument parsing and dispatches to subcommand handlers for
-``run``, ``status``, ``once``, ``clean``, ``doctor``, ``setup``, and ``update``.
+``run``, ``status``, ``once``, ``logs``, ``clean``, ``doctor``, ``setup``, and
+``update``.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from maestro.config import Config, ConfigError, RuntimePaths, load_config, runti
 from maestro.core.scheduler import DispatchVerdict, blocked_by_reason, explain_dispatch
 from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
+from maestro.logs import read_log
 from maestro.loop import Loop
 from maestro.manifest import CI_WORKFLOW_FILENAME
 from maestro.setup import SetupReport, run_setup
@@ -134,6 +136,34 @@ def _cmd_status(args: argparse.Namespace) -> int:
             held,
         )
     render_recent(console, paths.logs_dir, config.repo_slug)
+    return 0
+
+
+def _cmd_logs(args: argparse.Namespace) -> int:
+    """Handle ``maestro logs`` — dump an issue's latest-run log.
+
+    Prints the complete per-issue log to stdout, or writes it to ``--out PATH``.
+    The log is dumped verbatim (not through the themed console) so its raw
+    ``stream-json`` content is preserved byte-for-byte for piping or pasting.
+    A missing log is reported with a clear message and a non-zero exit.
+    """
+    config, paths = _load(args)
+    console = Console(theme=load_theme(config.theme))
+    content = read_log(paths.logs_dir, args.issue)
+    if content is None:
+        console.print(
+            f"No log found for issue #{args.issue}. It may not have been dispatched yet, "
+            "or its logs were cleared (maestro clean --logs).",
+            style="error",
+        )
+        return 1
+    if args.out:
+        out_path = Path(args.out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(content, encoding="utf-8")
+        console.print(f"Wrote issue #{args.issue} log to [issue]{out_path}[/issue].")
+    else:
+        sys.stdout.write(content)
     return 0
 
 
@@ -367,6 +397,11 @@ def build_parser() -> argparse.ArgumentParser:
     once = sub.add_parser("once", help="run a single poll cycle")
     once.add_argument("--dry-run", action="store_true", help="print decisions; dispatch nothing")
     once.set_defaults(func=_cmd_once)
+
+    logs = sub.add_parser("logs", help="dump an issue's latest-run worker log")
+    logs.add_argument("issue", type=int, help="issue number whose log to dump")
+    logs.add_argument("--out", default=None, help="write the log to this file instead of stdout")
+    logs.set_defaults(func=_cmd_logs)
 
     clean_cmd = sub.add_parser("clean", help="prune worktrees and stale branches")
     clean_cmd.add_argument("--logs", action="store_true", help="also clear logs/")

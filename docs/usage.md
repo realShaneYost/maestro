@@ -107,6 +107,7 @@ maestro run                 # start the poll/dispatch loop
 maestro status              # snapshot of the board and recent activity
 maestro status --watch      # live-refreshing worker-log view
 maestro once --dry-run      # one poll; explain each dispatch decision
+maestro logs <issue>        # dump an issue's latest-run worker log
 maestro clean               # prune finished worktrees and stale branches
 ```
 
@@ -144,6 +145,18 @@ Maestro keeps no database — there is no global state to corrupt. The worst cas
 **Stale worktrees:** a failed run leaves its worktree on disk by design. The next time you re-trigger that issue, dispatch **automatically discards the stale worktree** first and logs a WARNING — you don't have to `maestro clean` between a failed run and a redispatch.
 
 **Starting over:** you never *have* to — re-dropping a card into the trigger column is enough, because the worker detects where it left off. A full reset (move cards back to Backlog) is always available but rarely needed.
+
+## Inspecting a run's full log
+
+`maestro status --watch` summarises live activity, but when a run goes wrong you usually want the complete trace. `maestro logs <issue>` dumps the full per-issue log — Claude's raw `stream-json` output from that issue's most recent dispatch — straight to stdout, so you can read it or pipe it somewhere:
+
+```
+maestro logs 23              # print issue #23's latest-run log
+maestro logs 23 --out run.log  # write it to a file instead
+maestro logs 23 | pbcopy     # copy it to paste back to Claude for debugging
+```
+
+Each dispatch truncates the log file before the worker starts, so `logs` always shows the latest run. If the issue was never dispatched (or its logs were cleared with `maestro clean --logs`), the command says so and exits non-zero.
 
 ## Cleaning up artifacts
 
