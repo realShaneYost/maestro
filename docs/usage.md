@@ -103,6 +103,7 @@ Run all of these from inside the driven repo:
 ```
 maestro setup               # bootstrap the board's Priority field (idempotent)
 maestro doctor              # read-only preflight checks
+maestro add <issue>         # add an existing issue to the board in one step
 maestro run                 # start the poll/dispatch loop
 maestro status              # snapshot of the board and recent activity
 maestro status --watch      # live-refreshing worker-log view
@@ -112,6 +113,18 @@ maestro clean               # prune finished worktrees and stale branches
 ```
 
 Run `maestro run` in one terminal; check on it with `maestro status` from another.
+
+## Adding an issue to the board
+
+A freshly created GitHub issue is not on the Projects board, and Maestro only sees cards already on it. `maestro add <issue>` puts an existing issue on the board in one step:
+
+```
+gh issue create --title "Fix the thing"   # creates the issue, off the board
+maestro add 42                            # adds #42 to the board's leftmost column
+maestro add 42 --status "Backlog"         # ...or target a named column
+```
+
+By default the card lands in the board's **leftmost Status column** (the conventional `Backlog`/`Todo` entry column), and the command reports which column it chose. It does not place the card in the trigger column — adding an issue should not dispatch it; you move it there when it is ready to work. Done by hand this is two `gh` calls, and the second (`gh project item-edit`) needs the Status option's node ID, which GitHub regenerates whenever a column is edited — a cached ID fails silently. `maestro add` reads the live option ID at write time, so it never hits a stale-ID failure. An unknown `--status` is rejected with the board's actual column names listed.
 
 ## Priority
 
