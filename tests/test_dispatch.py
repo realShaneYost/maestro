@@ -11,7 +11,7 @@ def test_build_worker_command_renders_issue():
     cmd = build_worker_command("/cc-work {issue}", 42)
     assert cmd[:3] == ["claude", "-p", "/cc-work 42"]
     assert "--permission-mode" in cmd
-    assert "acceptEdits" in cmd
+    assert "bypassPermissions" in cmd
     assert "stream-json" in cmd
 
 
