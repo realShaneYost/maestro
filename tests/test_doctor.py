@@ -7,6 +7,8 @@ from pathlib import Path
 
 from maestro.config import Config
 from maestro.doctor import (
+    GH_AUTH_LOGIN_CMD,
+    GH_AUTH_REFRESH_PROJECT_CMD,
     CheckLevel,
     check_board_reachable,
     check_board_size,
@@ -51,6 +53,11 @@ def test_gh_auth_fail_surfaces_first_stderr_line():
     assert "not logged in" in result.message
 
 
+def test_gh_auth_fail_prints_exact_login_command():
+    result = check_gh_auth(_gh_fail(stderr="not logged in\n"))
+    assert GH_AUTH_LOGIN_CMD in result.message
+
+
 def test_gh_project_scope_pass_when_present():
     output = "Token scopes: 'repo', 'project', 'workflow'\n"
     result = check_gh_project_scope(_gh_ok(stdout=output))
@@ -61,6 +68,11 @@ def test_gh_project_scope_fail_when_missing():
     result = check_gh_project_scope(_gh_ok(stdout="Token scopes: 'repo', 'workflow'\n"))
     assert result.level is CheckLevel.FAIL
     assert "project" in result.message
+
+
+def test_gh_project_scope_fail_prints_exact_refresh_command():
+    result = check_gh_project_scope(_gh_ok(stdout="Token scopes: 'repo', 'workflow'\n"))
+    assert GH_AUTH_REFRESH_PROJECT_CMD in result.message
 
 
 def test_gh_project_scope_warn_when_scope_line_absent():

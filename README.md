@@ -15,9 +15,35 @@ Watches a GitHub Projects board and dispatches coding agents to work issues auto
 ## Requirements
 
 - Python 3.11+
-- [`gh`](https://cli.github.com/), authenticated (`gh auth login`)
+- [`gh`](https://cli.github.com/), authenticated with the `project` scope (see Prerequisites below)
 - `git`
 - A coding-agent CLI on your `PATH` (e.g. `claude`)
+
+## Prerequisites
+
+Maestro drives GitHub entirely through the `gh` CLI and stores no credentials of its own, so `gh` must be authenticated with the right scopes before you run anything. There is one blessed path — run it once:
+
+```
+gh auth login --hostname github.com --git-protocol https --web --scopes project
+```
+
+That grants the three scopes Maestro relies on:
+
+- `repo` — read issues and open pull requests (included by default).
+- `project` — read and write the Projects V2 board, so Maestro can move cards between columns. This is the scope new users most often miss.
+- `workflow` — included by default; lets a worker touch `.github/workflows` when an issue calls for it.
+
+Already logged in but missing the `project` scope? Add it without redoing the whole flow:
+
+```
+gh auth refresh -s project --hostname github.com
+```
+
+`maestro doctor` verifies both your auth status and the `project` scope, and prints the exact command above when either is missing. Maestro never authenticates for you — that stays a deliberate user action.
+
+### Headless worker permissions
+
+Maestro dispatches each worker as a headless `claude -p` process started with `--permission-mode bypassPermissions`. A headless worker has no human on hand to approve interactive permission prompts, so any stricter mode would stall it on its very first `gh` or `git` call. This is safe by construction: every worker runs in an isolated git worktree, never merges, and a human reviews each PR before it lands. You do not configure anything for this — it is the dispatch default — but if you point Maestro at a different worker CLI, that CLI must likewise run fully non-interactively. The dispatch model is described in [`docs/how-it-works.md`](docs/how-it-works.md).
 
 ## Install
 
