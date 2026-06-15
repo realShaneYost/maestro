@@ -11,6 +11,17 @@ def test_parser_accepts_all_subcommands():
         assert parser.parse_args([command]).command == command
 
 
+def test_logs_subcommand_parses_issue_and_out():
+    args = build_parser().parse_args(["logs", "42", "--out", "dump.log"])
+    assert args.command == "logs"
+    assert args.issue == 42
+    assert args.out == "dump.log"
+
+
+def test_logs_issue_defaults_out_to_none():
+    assert build_parser().parse_args(["logs", "7"]).out is None
+
+
 def test_status_watch_flag():
     assert build_parser().parse_args(["status", "--watch"]).watch is True
 
