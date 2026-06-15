@@ -15,6 +15,7 @@ from maestro.github import (
     _parse_priority,
     _parse_priority_rank_map,
     _parse_status_field_options,
+    _parse_status_field_ref,
 )
 
 
@@ -364,3 +365,59 @@ def test_status_field_options_missing_field_returns_none():
     payload = json.dumps({"data": {"repositoryOwner": {"projectV2": {"fields": {"nodes": []}}}}})
     trigger = StatusFieldTrigger("owner/repo", 1, "In Progress", runner=lambda _args: payload)
     assert trigger.status_field_options() is None
+
+
+def _field_ids_payload(project_id: str, field_id: str, columns: list[str]) -> str:
+    return json.dumps(
+        {
+            "data": {
+                "repositoryOwner": {
+                    "projectV2": {
+                        "id": project_id,
+                        "fields": {
+                            "nodes": [
+                                {
+                                    "id": field_id,
+                                    "name": "Status",
+                                    "options": [
+                                        {"id": f"opt-{name}", "name": name} for name in columns
+                                    ],
+                                }
+                            ]
+                        },
+                    }
+                }
+            }
+        }
+    )
+
+
+def test_parse_status_field_ref_reads_live_ids():
+    payload = json.loads(_field_ids_payload("proj-1", "field-1", ["Todo", "In Progress"]))
+    ref = _parse_status_field_ref(payload)
+    assert ref is not None
+    assert ref.project_id == "proj-1"
+    assert ref.field_id == "field-1"
+    assert ref.options == {"Todo": "opt-Todo", "In Progress": "opt-In Progress"}
+    # Insertion order is board column order; the first key is the leftmost column.
+    assert next(iter(ref.options)) == "Todo"
+
+
+def test_parse_status_field_ref_missing_status_field_returns_none():
+    payload = {
+        "data": {"repositoryOwner": {"projectV2": {"id": "proj-1", "fields": {"nodes": []}}}}
+    }
+    assert _parse_status_field_ref(payload) is None
+
+
+def test_parse_status_field_ref_unresolved_board_returns_none():
+    assert _parse_status_field_ref({"data": {"repositoryOwner": None}}) is None
+
+
+def test_status_field_ref_method_fetches_live_ids():
+    payload = _field_ids_payload("proj-2", "field-2", ["Backlog", "Done"])
+    trigger = StatusFieldTrigger("owner/repo", 1, "In Progress", runner=lambda _args: payload)
+    ref = trigger.status_field_ref()
+    assert ref is not None
+    assert ref.project_id == "proj-2"
+    assert ref.options["Done"] == "opt-Done"

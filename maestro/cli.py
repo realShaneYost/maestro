@@ -1,8 +1,8 @@
 """Command-line entry point for Maestro.
 
 This module wires up argument parsing and dispatches to subcommand handlers for
-``run``, ``status``, ``once``, ``logs``, ``clean``, ``doctor``, ``setup``, and
-``update``.
+``run``, ``status``, ``once``, ``logs``, ``add``, ``clean``, ``doctor``,
+``setup``, and ``update``.
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.logging import RichHandler
 
+from maestro.add import AddReport, add_issue_to_board
 from maestro.clean import CleanReport, clean
 from maestro.config import Config, ConfigError, RuntimePaths, load_config, runtime_paths
 from maestro.core.scheduler import DispatchVerdict, blocked_by_reason, explain_dispatch
@@ -358,6 +359,27 @@ def _cmd_update(args: argparse.Namespace) -> int:
     return 1 if report.upgrade.attempted and not report.upgrade.ok else 0
 
 
+def _print_add_report(console: Console, report: AddReport) -> None:
+    """Render the outcome of an ``maestro add`` run."""
+    if report.aborted:
+        console.print(f"[error]Could not add issue #{report.issue}:[/error] {report.aborted}")
+        return
+    console.print(
+        f"Added [issue]#{report.issue}[/issue] to the board in "
+        f"[message]{report.column!r}[/message]. "
+        "Move its card to the trigger column when it is ready to dispatch."
+    )
+
+
+def _cmd_add(args: argparse.Namespace) -> int:
+    """Handle ``maestro add`` — add an existing issue to the board in one step."""
+    config, _paths = _load(args)
+    console = Console(theme=load_theme(config.theme))
+    report = add_issue_to_board(config, args.issue, status=args.status)
+    _print_add_report(console, report)
+    return 1 if report.aborted else 0
+
+
 def _cmd_clean(args: argparse.Namespace) -> int:
     """Handle ``maestro clean`` — prune worktrees, branches, and optionally logs."""
     config, paths = _load(args)
@@ -402,6 +424,15 @@ def build_parser() -> argparse.ArgumentParser:
     logs.add_argument("issue", type=int, help="issue number whose log to dump")
     logs.add_argument("--out", default=None, help="write the log to this file instead of stdout")
     logs.set_defaults(func=_cmd_logs)
+
+    add_cmd = sub.add_parser("add", help="add an existing issue to the board")
+    add_cmd.add_argument("issue", type=int, help="issue number to add to the board")
+    add_cmd.add_argument(
+        "--status",
+        default=None,
+        help="Status column to place the card in (default: the board's leftmost column)",
+    )
+    add_cmd.set_defaults(func=_cmd_add)
 
     clean_cmd = sub.add_parser("clean", help="prune worktrees and stale branches")
     clean_cmd.add_argument("--logs", action="store_true", help="also clear logs/")

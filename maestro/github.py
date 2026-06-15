@@ -21,6 +21,7 @@ import json
 import logging
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from maestro.core.models import BoardState, Issue
@@ -85,6 +86,29 @@ query($login: String!, $number: Int!) {
         fields(first: 50) {
           nodes {
             ... on ProjectV2SingleSelectField { name options { name } }
+          }
+        }
+      }
+    }
+  }
+}
+"""
+
+# The board's node ID plus every single-select field's node ID and the node IDs
+# of its options. Adding an issue to the board and setting its Status both take
+# *node IDs*, not names — and Status option IDs are regenerated when a column is
+# edited, so they must be read live at the moment of the write rather than cached.
+# As in `_FIELDS_QUERY`, the fields are enumerated and the wanted one is picked
+# out client-side: a missing field then reads as "absent" instead of erroring.
+_FIELD_IDS_QUERY = """
+query($login: String!, $number: Int!) {
+  repositoryOwner(login: $login) {
+    ... on ProjectV2Owner {
+      projectV2(number: $number) {
+        id
+        fields(first: 50) {
+          nodes {
+            ... on ProjectV2SingleSelectField { id name options { id name } }
           }
         }
       }
@@ -216,6 +240,66 @@ def _parse_status_field_options(payload: dict[str, Any]) -> list[str] | None:
 def _parse_priority_field_options(payload: dict[str, Any]) -> list[str] | None:
     """Extract the Priority field's option names from the fields query."""
     return _parse_single_select_options(payload, "Priority")
+
+
+@dataclass(frozen=True)
+class StatusFieldRef:
+    """Live node IDs for the board and its Status single-select field.
+
+    Both adding a card and setting its Status take GitHub node IDs, and the
+    Status option IDs change whenever a column is edited, so these are read
+    fresh for every write rather than cached.
+
+    Attributes:
+        project_id: The Projects V2 board's node ID.
+        field_id: The Status field's node ID.
+        options: An ordered ``{option-name: option-id}`` map in board column
+            order, so the first entry is the board's leftmost Status column.
+    """
+
+    project_id: str
+    field_id: str
+    options: dict[str, str]
+
+
+def _parse_status_field_ref(payload: dict[str, Any]) -> StatusFieldRef | None:
+    """Extract the board and Status-field node IDs from the field-IDs query.
+
+    Args:
+        payload: The decoded JSON from :data:`_FIELD_IDS_QUERY`.
+
+    Returns:
+        A :class:`StatusFieldRef` with the live IDs, or ``None`` when the board
+        does not resolve or has no Status single-select field.
+    """
+    try:
+        owner = payload["data"]["repositoryOwner"]
+        project = owner["projectV2"] if isinstance(owner, dict) else None
+    except (KeyError, TypeError, AttributeError):
+        return None
+    if not isinstance(project, dict):
+        return None
+    project_id = project.get("id")
+    nodes = (
+        project.get("fields", {}).get("nodes") if isinstance(project.get("fields"), dict) else None
+    )
+    if not isinstance(project_id, str) or not isinstance(nodes, list):
+        return None
+    for node in nodes:
+        if not isinstance(node, dict) or node.get("name") != "Status":
+            continue
+        field_id = node.get("id")
+        raw_options = node.get("options")
+        if not isinstance(field_id, str) or not isinstance(raw_options, list):
+            return None
+        options: dict[str, str] = {}
+        for option in raw_options:
+            if isinstance(option, dict):
+                name, opt_id = option.get("name"), option.get("id")
+                if isinstance(name, str) and isinstance(opt_id, str):
+                    options[name] = opt_id
+        return StatusFieldRef(project_id=project_id, field_id=field_id, options=options)
+    return None
 
 
 def _parse_open_issues(payload: dict[str, Any]) -> tuple[set[int], dict[int, frozenset[int]]]:
@@ -387,6 +471,20 @@ class StatusFieldTrigger:
         """
         payload = self._run_field_query(_FIELDS_QUERY, "fields response")
         return _parse_priority_field_options(payload)
+
+    def status_field_ref(self) -> StatusFieldRef | None:
+        """Return live node IDs for the board and its Status field.
+
+        Used by ``maestro add`` to set a new card's Status by node ID. The
+        Status option IDs are read fresh on every call, so a column that was
+        edited (regenerating its option ID) never causes a stale-ID write
+        failure. Returns ``None`` when the board has no Status field.
+
+        Raises:
+            GitHubError: If the gh call fails or returns invalid JSON.
+        """
+        payload = self._run_field_query(_FIELD_IDS_QUERY, "field IDs response")
+        return _parse_status_field_ref(payload)
 
     def _run_field_query(self, query: str, error_label: str) -> dict[str, Any]:
         """Run a standalone field-introspection query through gh and decode it."""

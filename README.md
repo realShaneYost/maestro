@@ -95,6 +95,7 @@ cd /path/to/your-project
 maestro setup               # bootstrap the board's Priority field (idempotent)
 maestro doctor              # read-only preflight checks
 maestro update              # reinstall the tool and report dependency drift
+maestro add <issue>         # add an existing issue to the board in one step
 maestro run                 # start the poll/dispatch loop
 maestro status              # snapshot of the board and recent activity
 maestro status --watch      # live-refreshing worker-log view
@@ -103,6 +104,18 @@ maestro clean               # prune finished worktrees and stale branches
 ```
 
 Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup and recovery are both in [`docs/usage.md`](docs/usage.md); the design is in [`docs/how-it-works.md`](docs/how-it-works.md).
+
+## Adding an issue to the board
+
+Creating a GitHub issue does **not** put it on the Projects board — Maestro only ever sees cards that are already on it. Adding one by hand is a two-step `gh` dance (`gh project item-add`, then `gh project item-edit` to set Status), and the second step takes the Status option's node ID, which GitHub *regenerates* whenever you edit a column. A cached ID then fails silently. `maestro add` collapses both steps into one and reads the live option ID at the moment it writes, so it never trips on a stale ID:
+
+```
+gh issue create --title "Fix the thing"   # creates the issue (not on the board)
+maestro add 42                            # adds #42 to the board in its leftmost column
+maestro add 42 --status "Backlog"         # ...or name the column explicitly
+```
+
+By default the card lands in the board's **leftmost Status column** — the conventional `Backlog`/`Todo` entry column — and `maestro add` prints which column it chose. It deliberately does *not* drop the card straight into the trigger column: adding an issue should not also dispatch it. When you are ready to work the issue, move its card into the trigger column (or run `maestro add 42 --status "In Progress"` if that is your trigger column) and the next poll picks it up. An unknown `--status` is rejected with the board's actual column names listed.
 
 ## Continuous integration (optional)
 

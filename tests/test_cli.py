@@ -11,6 +11,19 @@ def test_parser_accepts_all_subcommands():
         assert parser.parse_args([command]).command == command
 
 
+def test_add_subcommand_parses_issue_and_status():
+    args = build_parser().parse_args(["add", "42", "--status", "Backlog"])
+    assert args.command == "add"
+    assert args.issue == 42
+    assert args.status == "Backlog"
+
+
+def test_add_status_defaults_to_none():
+    args = build_parser().parse_args(["add", "7"])
+    assert args.issue == 7
+    assert args.status is None
+
+
 def test_logs_subcommand_parses_issue_and_out():
     args = build_parser().parse_args(["logs", "42", "--out", "dump.log"])
     assert args.command == "logs"
