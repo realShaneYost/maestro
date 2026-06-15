@@ -84,7 +84,7 @@ Maestro keeps its editable dependencies in three fixed locations inside each dri
 | Config | `maestro.yml` (repo root) | yes | `maestro.example.yml` |
 | CI workflow | `.github/workflows/` | optional | — |
 
-When Maestro changes, these are the only files you reconcile. Run `maestro doctor` to see them listed with their presence at a glance.
+When Maestro changes, these are the only files you reconcile. Run `maestro doctor` to see them listed with their presence at a glance, or `maestro update` to upgrade the tool and get a drift report against the shipped templates — including any new `maestro.yml` keys. `maestro update` never overwrites your edits; it reports drift and leaves the reconciliation to you.
 
 ## Use
 
@@ -94,6 +94,7 @@ Run every command **from inside the driven repo** — Maestro reads `./maestro.y
 cd /path/to/your-project
 maestro setup               # bootstrap the board's Priority field (idempotent)
 maestro doctor              # read-only preflight checks
+maestro update              # reinstall the tool and report dependency drift
 maestro run                 # start the poll/dispatch loop
 maestro status              # snapshot of the board and recent activity
 maestro status --watch      # live-refreshing worker-log view

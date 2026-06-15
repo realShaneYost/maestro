@@ -7,7 +7,7 @@ from maestro.cli import build_parser
 
 def test_parser_accepts_all_subcommands():
     parser = build_parser()
-    for command in ("run", "status", "once", "clean"):
+    for command in ("run", "status", "once", "clean", "doctor", "setup", "update"):
         assert parser.parse_args([command]).command == command
 
 
