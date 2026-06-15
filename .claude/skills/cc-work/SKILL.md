@@ -17,6 +17,7 @@ Autonomously run GitHub issue `N` from start to merge-ready PR. One operator inv
 - **End the turn silently after pushing and opening the PR.** No "want me to watch CI?" or "should I merge it?" prompts. The operator reviews and merges manually when satisfied.
 - **Plain-checkbox subtasks.** Issue subtasks are `- [ ] description` lines. Work them in order; tick each via `gh issue edit` as you finish, so the issue body stays a live progress board.
 - **One commit per run.** Don't amend prior commits; if rework is needed, push a new commit on top.
+- **Dependency ordering is native-only.** Maestro decides which issues may run in parallel from GitHub's native "blocked by" relationship — never from body text or task-list references. Assume any issue you're handed has no open native blocker. If the body claims this issue depends on unfinished work that is *not* captured as a native "blocked by" relationship, don't race ahead — treat it as genuine ambiguity and use the [Blocked sub-flow](#blocked-sub-flow).
 - **Honor this repo's coding standards.** Maestro's `CLAUDE.md` is binding: 100-col lines, full type hints, Google-style docstrings, `X | None` over `Optional`, no screen I/O in `core/`, and the architecture invariants (authority ends at PR-open, scheduler is pure, etc.). A change that breaks an invariant is a regression, not a feature.
 
 ## 1. Validate arguments

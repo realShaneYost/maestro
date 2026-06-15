@@ -17,7 +17,7 @@ from rich.logging import RichHandler
 
 from maestro.clean import CleanReport, clean
 from maestro.config import Config, ConfigError, RuntimePaths, load_config, runtime_paths
-from maestro.core.scheduler import DispatchVerdict, explain_dispatch
+from maestro.core.scheduler import DispatchVerdict, blocked_by_reason, explain_dispatch
 from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.loop import Loop
@@ -108,12 +108,23 @@ def _cmd_status(args: argparse.Namespace) -> int:
     except GitHubError as err:
         print_board_unreachable(console, str(err))
     else:
+        # Flag issues the scheduler holds back for an open native blocker.
+        # Only trigger-column, still-open issues qualify — the same precedence
+        # the scheduler uses — so this view agrees with `once --dry-run`.
+        held = {
+            issue.number: reason
+            for issue in board.issues
+            if issue.in_trigger_column
+            and issue.number in board.open_numbers
+            and (reason := blocked_by_reason(issue, board.open_numbers)) is not None
+        }
         print_board_section(
             console,
             board,
             config.trigger_column,
             config.blocked_column,
             config.review_column,
+            held,
         )
     render_recent(console, paths.logs_dir, config.repo_slug)
     return 0

@@ -50,6 +50,15 @@ class CheckResult:
 GhRunner = Callable[[list[str]], tuple[int, str, str]]
 
 
+# Blessed, opinionated remediation commands. These live in the doctor layer
+# (never ``core/``) so the CLI surface owns every operator-facing string. The
+# login command must stay in sync with the README's Prerequisites section.
+GH_AUTH_LOGIN_CMD = (
+    "gh auth login --hostname github.com --git-protocol https --web --scopes project"
+)
+GH_AUTH_REFRESH_PROJECT_CMD = "gh auth refresh -s project --hostname github.com"
+
+
 def _run_gh(args: list[str]) -> tuple[int, str, str]:
     """Run ``gh`` with ``args`` and return ``(returncode, stdout, stderr)``."""
     try:
@@ -72,12 +81,21 @@ def check_install() -> CheckResult:
 
 
 def check_gh_auth(runner: GhRunner) -> CheckResult:
-    """Verify ``gh auth status`` succeeds."""
+    """Verify ``gh auth status`` succeeds.
+
+    On failure the message names the exact blessed ``gh auth login`` command so
+    a logged-out operator has a copy-pasteable next step. Maestro never runs the
+    login itself — authentication stays a deliberate user action.
+    """
     code, _stdout, stderr = runner(["auth", "status"])
     if code == 0:
         return CheckResult("gh auth", CheckLevel.PASS, "authenticated")
     detail = stderr.strip().splitlines()[0] if stderr.strip() else f"exit {code}"
-    return CheckResult("gh auth", CheckLevel.FAIL, f"gh auth status failed: {detail}")
+    return CheckResult(
+        "gh auth",
+        CheckLevel.FAIL,
+        f"gh auth status failed: {detail}; log in with `{GH_AUTH_LOGIN_CMD}`",
+    )
 
 
 _SCOPE_LINE = re.compile(r"Token scopes:\s*(.*)$", re.MULTILINE)
@@ -105,7 +123,7 @@ def check_gh_project_scope(runner: GhRunner) -> CheckResult:
     return CheckResult(
         "gh project scope",
         CheckLevel.FAIL,
-        "gh token is missing the 'project' scope; run `gh auth refresh -s project`"
+        f"gh token is missing the 'project' scope; run `{GH_AUTH_REFRESH_PROJECT_CMD}`"
         + (f" (current: {match.group(1).strip()})" if code == 0 else ""),
     )
 
