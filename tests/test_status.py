@@ -228,3 +228,28 @@ def test_render_board_summary_lists_issue_numbers_and_short_titles():
     assert text.index("#7") < text.index("#42")
     assert "Implement feature X" in text
     assert "Tiny ticket" in text
+
+
+def test_render_board_summary_annotates_held_issue():
+    board = BoardState(
+        issues=[
+            _issue(38, "build the CLI", status_column="In Progress"),
+            _issue(7, "unrelated", status_column="In Progress"),
+        ],
+        open_numbers={7, 38},
+    )
+    held = {38: "skipped — blocked by open issue(s): #37"}
+    lines = render_board_summary(board, "In Progress", "Blocked", "In Review", held)
+    text = _flatten(lines)
+    # The held issue carries its reason inline; the unrelated one does not.
+    assert "#38  build the CLI  — skipped — blocked by open issue(s): #37" in text
+    assert "#7  unrelated\n" in text + "\n"
+
+
+def test_render_board_summary_no_held_reasons_leaves_rows_plain():
+    board = BoardState(
+        issues=[_issue(1, "plain", status_column="In Progress")],
+        open_numbers={1},
+    )
+    lines = render_board_summary(board, "In Progress", "Blocked", "In Review")
+    assert "blocked by" not in _flatten(lines)

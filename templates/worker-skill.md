@@ -12,6 +12,7 @@ Maestro invokes the worker with one input — an **issue number** — via the co
 - The worker runs the issue end to end and **opens a pull request**. It must **never merge** — a human reviews and merges.
 - The worker process exits **only after every piece of durable state is parked in GitHub** — the PR is opened, any comment is posted, and the issue's project card has been moved to the correct column. Maestro classifies the run by *which* column the card ends up in, so leaving the card in the trigger column is a contract violation that Maestro records as `failed` regardless of exit code.
 - The column names this skill uses for parking (the trigger, review, and blocked columns) **must match the orchestrator's configured `trigger_column`, `review_column`, and `blocked_column` exactly, and must match the live board**. A rename has to happen in all three places at once.
+- **Dependency ordering rides on GitHub's native "blocked by" relationship, and nothing else.** Maestro holds back any issue whose native blocker is still open and dispatches everything else in the trigger column in parallel. A dependency expressed only as issue-body text or a task-list reference is invisible to Maestro — both cards dispatch at once and the two workers can collide on the same files. The worker may assume that any issue it is handed has no open native blocker; if an issue's body claims it depends on unfinished work that is not captured as a native "blocked by" relationship, treat that as a blocker rather than racing ahead.
 
 ## Steps
 
