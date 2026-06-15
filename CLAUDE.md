@@ -19,7 +19,7 @@ Maestro is deliberately a plain program, not a long-running AI session. It was c
 3. Run log + `status` / `status --watch`. *(done)*
 4. `clean`. *(done)*
 5. The `run` loop — trigger → scheduler → dispatch → run log. *(done)*
-6. `templates/worker-skill.md`. *(done)*
+6. `maestro/templates/worker-skill.md`. *(done)*
 7. GitHub trigger source (`StatusFieldTrigger`) — Projects V2 board polling. *(done)*
 8. `run` / `once` wired to the trigger. *(done)*
 9. Board-semantics upgrade — column-based outcome classification, Priority
@@ -84,16 +84,15 @@ maestro/
 ├── CLAUDE.md
 ├── README.md
 ├── pyproject.toml
-├── maestro.example.yml
 ├── maestro/
 │   ├── __main__.py        # python -m maestro
 │   ├── cli.py             # argparse entry point
 │   ├── config.py          # maestro.yml loading + validation
+│   ├── templates/         # bundled reference templates (worker skill, CI, example config)
 │   └── core/
 │       ├── models.py      # Issue, WorkerState, RunRecord
 │       └── scheduler.py   # pure dispatch-decision logic
 ├── docs/
-├── templates/             # worker-skill template (model-agnostic)
 └── tests/
 ```
 
@@ -110,4 +109,4 @@ These are hard rules. Code that breaks one is a regression and must be rejected 
 
 ## Worker Contract
 
-Maestro spawns a worker via a configurable prompt (default `/cc-work {issue}`). Any repository it drives must supply a worker skill that takes an issue number, works within a prepared git worktree, and opens a PR. `templates/worker-skill.md` documents this contract in model-agnostic prose — it works with Claude out of the box and is portable to any capable coding agent.
+Maestro spawns a worker via a configurable prompt (default `/cc-work {issue}`). Any repository it drives must supply a worker skill that takes an issue number, works within a prepared git worktree, and opens a PR. `maestro/templates/worker-skill.md` documents this contract in model-agnostic prose — it works with Claude out of the box and is portable to any capable coding agent.

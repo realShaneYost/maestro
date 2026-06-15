@@ -29,6 +29,13 @@ maestro = "maestro.cli:main"
 [tool.setuptools.packages.find]
 include = ["maestro*"]
 
+# Bundle the non-.py reference templates (worker skill, CI skeleton, example
+# config) into the wheel so they ship inside the installed package and `maestro
+# update` / `doctor` can resolve them via importlib.resources after a plain
+# `uv tool install`. Without this, only `maestro*.py` modules land in the wheel.
+[tool.setuptools.package-data]
+maestro = ["templates/*"]
+
 [tool.black]
 line-length = 100
 target-version = ["py311"]

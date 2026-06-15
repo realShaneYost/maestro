@@ -14,7 +14,7 @@ The setup is idempotent: a second run mutates nothing and reports it.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from pathlib import Path
+from importlib.resources.abc import Traversable
 
 from maestro.config import Config
 from maestro.doctor import (
@@ -26,7 +26,7 @@ from maestro.doctor import (
 )
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.install import InstallInfo, detect_install
-from maestro.manifest import PACKAGE_ROOT, ci_workflow_destination, read_ci_template
+from maestro.manifest import PACKAGE_FILES, ci_workflow_destination, read_ci_template
 
 
 @dataclass
@@ -80,7 +80,7 @@ def _build_trigger(config: Config, gh: GhRunner) -> StatusFieldTrigger:
 _PRIORITY_OPTIONS = ("Critical", "High", "Normal", "Low")
 
 
-def _materialize_ci(config: Config, report: SetupReport, package_root: Path) -> None:
+def _materialize_ci(config: Config, report: SetupReport, package_root: Traversable) -> None:
     """Write the CI skeleton into the repo when ``manage_ci`` is enabled.
 
     A no-op when ``manage_ci`` is off (the default) — the repo is left untouched.
@@ -110,7 +110,7 @@ def _materialize_ci(config: Config, report: SetupReport, package_root: Path) -> 
 
 
 def run_setup(
-    config: Config, *, gh_runner: GhRunner = _run_gh, package_root: Path = PACKAGE_ROOT
+    config: Config, *, gh_runner: GhRunner = _run_gh, package_root: Traversable = PACKAGE_FILES
 ) -> SetupReport:
     """Bootstrap the board's Priority field and verify Status columns.
 

@@ -65,7 +65,7 @@ def _write(path: Path, text: str) -> None:
 
 def _stage_templates(package_root: Path, *, worker: str, config: str) -> None:
     _write(package_root / "templates" / "worker-skill.md", worker)
-    _write(package_root / "maestro.example.yml", config)
+    _write(package_root / "templates" / "maestro.example.yml", config)
 
 
 # --- version verification --------------------------------------------------
