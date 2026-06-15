@@ -1,7 +1,7 @@
 """Command-line entry point for Maestro.
 
 This module wires up argument parsing and dispatches to subcommand handlers for
-``run``, ``status``, ``once``, and ``clean``.
+``run``, ``status``, ``once``, ``clean``, ``doctor``, ``setup``, and ``update``.
 """
 
 from __future__ import annotations
@@ -24,6 +24,12 @@ from maestro.loop import Loop
 from maestro.setup import SetupReport, run_setup
 from maestro.status import print_board_section, print_board_unreachable, render_recent, watch
 from maestro.theme import ThemeError, load_theme
+from maestro.update import (
+    DependencyReconciliation,
+    ReconcileStatus,
+    UpdateReport,
+    run_update,
+)
 from maestro.worktree import WorktreeError, WorktreeManager
 
 
@@ -250,6 +256,60 @@ def _cmd_setup(args: argparse.Namespace) -> int:
     return 0
 
 
+_RECONCILE_MARK = {
+    ReconcileStatus.IN_SYNC: "[green]✓[/green]",
+    ReconcileStatus.DRIFTED: "[yellow]![/yellow]",
+    ReconcileStatus.MISSING: "[error]✗[/error]",
+    ReconcileStatus.NO_TEMPLATE: "[message]·[/message]",
+    ReconcileStatus.TEMPLATE_UNAVAILABLE: "[yellow]?[/yellow]",
+}
+
+
+def _print_reconciliation(console: Console, item: DependencyReconciliation) -> None:
+    """Render one dependency's reconciliation row and any new config keys."""
+    mark = _RECONCILE_MARK[item.status]
+    console.print(f"  {mark}  [issue]{item.name}[/issue]  [message]{item.detail}[/message]")
+    for key in item.new_config_keys:
+        console.print(
+            f"        [yellow]new config key[/yellow] [issue]{key.name}[/issue] "
+            f"[message](default: {key.default})[/message]"
+        )
+
+
+def _print_update_report(console: Console, report: UpdateReport) -> None:
+    """Render the upgrade outcome and the editable-dependency reconciliation."""
+    console.print(f"[message]{report.install.summary}[/message]")
+    upgrade = report.upgrade
+    style = "error" if upgrade.attempted and not upgrade.ok else "message"
+    console.print(f"[{style}]{upgrade.detail}[/{style}]")
+    if upgrade.attempted and not upgrade.ok:
+        for command in upgrade.commands:
+            if not command.ok and command.stderr.strip():
+                console.print(
+                    f"  [error]uv {' '.join(command.args)}[/error]: {command.stderr.strip()}"
+                )
+    console.print("\nEditable-dependency reconciliation:")
+    for item in report.reconciliations:
+        _print_reconciliation(console, item)
+    drifted = [r for r in report.reconciliations if r.status is ReconcileStatus.DRIFTED]
+    missing = [r for r in report.reconciliations if r.status is ReconcileStatus.MISSING]
+    if drifted or missing:
+        console.print(
+            "\nNothing was overwritten. Review the flagged file(s) above and " "reconcile by hand."
+        )
+    else:
+        console.print("\nAll editable dependencies are in sync.")
+
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    """Handle ``maestro update`` — reinstall the tool and reconcile deps."""
+    config, _paths = _load(args)
+    console = Console(theme=load_theme(config.theme))
+    report = run_update(config)
+    _print_update_report(console, report)
+    return 1 if report.upgrade.attempted and not report.upgrade.ok else 0
+
+
 def _cmd_clean(args: argparse.Namespace) -> int:
     """Handle ``maestro clean`` — prune worktrees, branches, and optionally logs."""
     config, paths = _load(args)
@@ -301,6 +361,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     setup_cmd = sub.add_parser("setup", help="bootstrap a board's Priority field")
     setup_cmd.set_defaults(func=_cmd_setup)
+
+    update_cmd = sub.add_parser(
+        "update", help="reinstall the Maestro tool and reconcile editable deps"
+    )
+    update_cmd.set_defaults(func=_cmd_update)
 
     return parser
 
