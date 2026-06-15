@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from maestro.core.models import Issue
-from maestro.core.scheduler import dispatchable_issues, explain_dispatch
+from maestro.core.scheduler import blocked_by_reason, dispatchable_issues, explain_dispatch
 
 
 def make_issue(
@@ -55,6 +55,47 @@ def test_dispatches_issue_once_blocker_closed():
     # Issue 1 is closed (absent from the open set), so 2 is free.
     result = dispatchable_issues(issues, {2}, set(), max_concurrent=2)
     assert [i.number for i in result] == [2]
+
+
+def test_blocked_by_gate_holds_then_releases():
+    # Regression for the parallel-collision bug (issue #17): two issues where
+    # #38 declares #37 as a native `blockedBy` blocker. While #37 is open, #38
+    # must be held back so the two workers cannot run in parallel and collide;
+    # once #37 closes, #38 becomes dispatchable on the next poll.
+    blocker = make_issue(37)
+    dependent = make_issue(38, blocked_by={37})
+    issues = [blocker, dependent]
+
+    # Both open: the blocker is dispatchable, the dependent is held.
+    held = dispatchable_issues(issues, {37, 38}, set(), max_concurrent=2)
+    assert [i.number for i in held] == [37]
+
+    # Blocker closed (absent from the open set): the dependent is released.
+    released = dispatchable_issues([dependent], {38}, set(), max_concurrent=2)
+    assert [i.number for i in released] == [38]
+
+
+def test_blocked_by_reason_names_each_open_blocker():
+    issue = make_issue(38, blocked_by={37, 5})
+    # Only blockers still in the open set are named, ascending.
+    assert blocked_by_reason(issue, {5, 37, 38}) == "skipped — blocked by open issue(s): #5, #37"
+
+
+def test_blocked_by_reason_none_when_blockers_closed():
+    issue = make_issue(38, blocked_by={37})
+    assert blocked_by_reason(issue, {38}) is None
+
+
+def test_blocked_by_reason_none_without_blockers():
+    assert blocked_by_reason(make_issue(38), {38}) is None
+
+
+def test_blocked_by_reason_matches_dispatch_verdict():
+    # The board view reuses blocked_by_reason; the scheduler's verdict uses the
+    # same string. They must never disagree on why an issue is held.
+    issue = make_issue(38, blocked_by={37})
+    verdict = explain_dispatch([issue], {37, 38}, set(), max_concurrent=2)[0]
+    assert verdict.reason == blocked_by_reason(issue, {37, 38})
 
 
 def test_skips_in_flight_issue():

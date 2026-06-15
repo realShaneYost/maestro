@@ -214,24 +214,32 @@ def render_board_summary(
     trigger_column: str,
     blocked_column: str,
     review_column: str,
+    held_reasons: dict[int, str] | None = None,
 ) -> list[Text]:
     """Build the per-column board summary as a list of rich :class:`Text` lines.
 
     Columns are listed in a fixed order — ``trigger_column``, ``blocked_column``,
     ``review_column``, then any other observed Status-field values in
     alphabetical order. Empty columns are omitted. Each populated column gets
-    one header line and one ``  #N  short title`` line per issue.
+    one header line and one ``  #N  short title`` line per issue. An issue whose
+    number appears in ``held_reasons`` gets its reason appended to its row, so
+    an operator can see at a glance that the issue is being held back and why.
 
     Args:
         board: Board state from a trigger-source poll.
         trigger_column: Configured trigger-column name.
         blocked_column: Configured blocked-column name.
         review_column: Configured review-column name.
+        held_reasons: Issue number → held reason, for issues the scheduler is
+            holding back (e.g. an open native blocker). The reason string is the
+            scheduler's own, so the board view and ``maestro once --dry-run``
+            never disagree on why an issue is held.
 
     Returns:
         Rendered lines for ``Console.print``. An empty list if no issues with
         a Status value live on the board.
     """
+    held = held_reasons or {}
     by_column: dict[str, list[tuple[int, str]]] = {}
     for issue in board.issues:
         column = issue.status_column
@@ -255,6 +263,10 @@ def render_board_summary(
             row.append(f"  #{number}", style="issue")
             row.append("  ")
             row.append(_short_title(title, 60), style="message")
+            reason = held.get(number)
+            if reason is not None:
+                row.append("  — ")
+                row.append(reason, style="yellow")
             lines.append(row)
     return lines
 
@@ -265,6 +277,7 @@ def print_board_section(
     trigger_column: str,
     blocked_column: str,
     review_column: str,
+    held_reasons: dict[int, str] | None = None,
 ) -> None:
     """Print the board summary section to ``console``.
 
@@ -272,8 +285,19 @@ def print_board_section(
     a trailing blank line. An empty result prints a short "no issues" header
     instead of nothing — silent absence is harder to debug than an explicit
     message.
+
+    Args:
+        console: The console to print to.
+        board: Board state from a trigger-source poll.
+        trigger_column: Configured trigger-column name.
+        blocked_column: Configured blocked-column name.
+        review_column: Configured review-column name.
+        held_reasons: Issue number → held reason, forwarded to
+            :func:`render_board_summary` so held issues are flagged inline.
     """
-    summary = render_board_summary(board, trigger_column, blocked_column, review_column)
+    summary = render_board_summary(
+        board, trigger_column, blocked_column, review_column, held_reasons
+    )
     if summary:
         console.print("Board:", style="header")
         for line in summary:

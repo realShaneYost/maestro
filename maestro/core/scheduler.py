@@ -40,6 +40,31 @@ class DispatchVerdict:
     reason: str
 
 
+def blocked_by_reason(issue: Issue, open_numbers: set[int]) -> str | None:
+    """Return why ``issue`` is held by an open native blocker, or ``None``.
+
+    An issue declares its blockers via :attr:`Issue.blocked_by` (GitHub's
+    native "blocked by" relationship). The issue is held while any of those
+    blockers is still open. This is the single source of truth for the
+    held-by-blocker message, shared by the scheduler's dispatch gate and the
+    ``maestro status`` board view so the two never disagree.
+
+    Args:
+        issue: The issue being judged.
+        open_numbers: Issue numbers that are still open. A blocker counts as
+            satisfied only once it leaves this set.
+
+    Returns:
+        The held reason naming each open blocker, or ``None`` when no declared
+        blocker is still open.
+    """
+    open_blockers = sorted(issue.blocked_by & open_numbers)
+    if not open_blockers:
+        return None
+    listing = ", ".join(f"#{n}" for n in open_blockers)
+    return f"skipped — blocked by open issue(s): {listing}"
+
+
 def _ready_reason(issue: Issue, open_numbers: set[int], in_flight: set[int]) -> str | None:
     """Return the first per-issue reason ``issue`` is not ready, or ``None`` if ready.
 
@@ -53,11 +78,7 @@ def _ready_reason(issue: Issue, open_numbers: set[int], in_flight: set[int]) -> 
         return "skipped — issue is closed"
     if issue.number in in_flight:
         return "skipped — already in flight"
-    open_blockers = sorted(issue.blocked_by & open_numbers)
-    if open_blockers:
-        listing = ", ".join(f"#{n}" for n in open_blockers)
-        return f"skipped — blocked by open issue(s): {listing}"
-    return None
+    return blocked_by_reason(issue, open_numbers)
 
 
 def explain_dispatch(
