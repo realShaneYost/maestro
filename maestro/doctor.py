@@ -21,6 +21,7 @@ from pathlib import Path
 from maestro.config import Config
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.install import detect_install
+from maestro.manifest import MANIFEST, WORKER_SKILL, Dependency
 
 
 class CheckLevel(enum.Enum):
@@ -240,6 +241,32 @@ def check_worker_skill_present(repo_path: Path, worker_prompt: str) -> CheckResu
     )
 
 
+def check_dependency(dependency: Dependency, repo_path: Path) -> CheckResult:
+    """Report whether a manifest dependency is present at its expected location.
+
+    A missing required dependency FAILs; a missing optional one WARNs. The
+    worker skill is reported by :func:`check_worker_skill_present` instead, which
+    follows the configured ``worker_prompt``, so this is the right reporter for
+    the remaining manifest entries.
+
+    Args:
+        dependency: The manifest entry to check.
+        repo_path: Root of the driven repository.
+
+    Returns:
+        A :class:`CheckResult` naming the dependency, its location, and presence.
+    """
+    if dependency.is_present(repo_path):
+        return CheckResult(dependency.name, CheckLevel.PASS, f"present at {dependency.location}")
+    level = CheckLevel.FAIL if dependency.required else CheckLevel.WARN
+    qualifier = "required" if dependency.required else "optional"
+    return CheckResult(
+        dependency.name,
+        level,
+        f"{qualifier} dependency missing at {dependency.location}",
+    )
+
+
 def check_python_repo_needs_worktree_setup(
     repo_path: Path, worktree_setup: str | None
 ) -> CheckResult | None:
@@ -330,7 +357,14 @@ def run_checks(
         )
     )
     results.append(check_priority_field_present(trigger))
-    results.append(check_worker_skill_present(config.repo_path, config.worker_prompt))
+    # Report every editable dependency the manifest enumerates. The worker skill
+    # is reported via the prompt-aware check so a non-default or non-Claude skill
+    # layout still resolves correctly; the rest report against their fixed paths.
+    for dependency in MANIFEST:
+        if dependency.name == WORKER_SKILL:
+            results.append(check_worker_skill_present(config.repo_path, config.worker_prompt))
+        else:
+            results.append(check_dependency(dependency, config.repo_path))
     py = check_python_repo_needs_worktree_setup(config.repo_path, config.worktree_setup)
     if py is not None:
         results.append(py)
