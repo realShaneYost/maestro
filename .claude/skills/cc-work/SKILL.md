@@ -158,12 +158,45 @@ See [Ship sub-procedure](#ship-sub-procedure). Then **end the turn**.
 
 ## 8. Rework mode
 
-### 8.1 Check out the branch
+### 8.1 Check out and sync the branch
 
 ```bash
 git checkout "issue/N-<slug>"
-git pull --ff-only
+git pull --ff-only  # fast-forward the branch from its own upstream
 ```
+
+Then bring the branch up to date with `main`. When a sibling PR merges first, this branch falls behind `origin/main`; left stale, CI runs against an outdated base and the PR may fail to merge cleanly. Recover by **merging `origin/main` into the branch** — never rebase, never force-push. A merge (no history rewrite) is the only sync that stays within Maestro's git-surface invariant: workers add/remove worktrees and push their own branch, nothing else.
+
+```bash
+# origin/main is already current from §5's fetch.
+git merge --no-edit origin/main
+```
+
+- **Clean merge or already up to date** (`git merge` exits 0) → continue to §8.2.
+- **Conflicts** (`git merge` exits non-zero, leaving conflict markers) → resolve or escalate, per below.
+
+List the conflicted files:
+
+```bash
+git diff --name-only --diff-filter=U
+```
+
+Resolve **only unambiguous** conflicts yourself — cases where the correct merged result is obvious and carries no behavioral risk (e.g. two PRs each appended a different bullet to the same doc list, or both added an import: keep both). After resolving, complete the merge commit:
+
+```bash
+git add <resolved paths>   # specific paths, not -A
+git commit --no-edit       # finalizes the merge commit
+```
+
+Then **re-run the full gate (§7.3) on the merged result** — a clean textual merge can still break the build.
+
+If any conflict is **non-trivial or its correct resolution is unclear** (overlapping logic changes, semantics you cannot determine with confidence), do **not** guess. Abort the merge and escalate:
+
+```bash
+git merge --abort
+```
+
+Then go to the [Blocked sub-flow](#blocked-sub-flow), naming the conflicted files and why the resolution is ambiguous (a decision blocker). `git merge --abort` restores a clean tree, so there is no WIP to push.
 
 ### 8.2 Gather rework context
 
@@ -200,7 +233,7 @@ git commit -m "Address PR review feedback"  # or "Fix CI failures", etc.
 git push  # branch is already tracking; no -u needed
 ```
 
-Pushing the new commit re-triggers CI on the PR. Then move the card — see [Move card to In Review sub-procedure](#move-card-to-in-review-sub-procedure) — so the issue leaves the trigger column. **End the turn**: the operator will re-review and merge when satisfied.
+A plain `git push` carries up every local commit, including the §8.1 merge commit if one was made. Pushing re-triggers CI on the PR. Then move the card — see [Move card to In Review sub-procedure](#move-card-to-in-review-sub-procedure) — so the issue leaves the trigger column. **End the turn**: the operator will re-review and merge when satisfied.
 
 ## 9. Resume mode
 
@@ -442,7 +475,7 @@ gh project item-edit --id "$ITEM_ID" --field-id "$FIELD_ID" --single-select-opti
 
 ## What this skill does NOT do
 
-- Does **not** force-push.
+- Does **not** force-push or rebase. (Merging `origin/main` *into* the issue branch to recover from divergence — §8.1 — is allowed; that adds a merge commit without rewriting history, and is not the same as merging the PR.)
 - Does **not** edit closed issues.
 - Does **not** invoke other skills.
 - Does **not** invoke `AskUserQuestion` — operator-facing decisions go through the Blocked sub-flow.
