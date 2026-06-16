@@ -22,7 +22,7 @@ Maestro invokes the worker with one input — an **issue number** — via the co
 
 3. **Decide the mode.** **A pull request already exists for this issue's branch → rework.** Otherwise → fresh work. *Detection keys on PR existence, not card position.* That is the self-healing invariant: a worker that dies between PR-open and card-move is recovered on the next dispatch, because the next worker still sees the PR and resumes in rework mode. **Do not change this detection rule.**
 
-4. **Implement.** Make the changes, following the repository's existing conventions and standards. On **rework**, address the PR's review comments, inline diff comments, any failed CI logs, and any new issue comments.
+4. **Implement.** Make the changes, following the repository's existing conventions and standards. On **rework**, first bring the branch up to date with `main`: when a sibling PR has merged first, the branch falls behind `origin/main` and a fast-forward update fails. Recover by **merging `origin/main` into the branch** — never rebase, never force-push, because a merge adds a commit without rewriting history and so stays within Maestro's git surface (workers add/remove worktrees and push their own branch, nothing else). Resolve **only unambiguous** conflicts — cases where the merged result is obvious and risk-free, such as two PRs each appending a different bullet to the same doc list — then re-run the quality gate on the merged result, because a clean textual merge can still break the build. If any conflict is non-trivial or its correct resolution is unclear, abort the merge and escalate via *When genuinely blocked* rather than guessing. Once the branch is current, address the PR's review comments, inline diff comments, any failed CI logs, and any new issue comments.
 
 5. **Verify.** Run the repository's quality gates — formatter, linter, type-checker, tests — and fix anything that fails. *Adapt this command list to the driven repository.* If the gates will not run because the environment itself is broken (missing tools or extras), that is a blocker — see *When genuinely blocked* — not a bootstrap task.
 
@@ -36,7 +36,7 @@ Maestro invokes the worker with one input — an **issue number** — via the co
    3. **Exit 0.** Do not merge. Do not wait on CI.
 
    **Rework flow:**
-   1. Push the new commit (already done in step 6).
+   1. Push the new commit (already done in step 6) — a plain push also carries up the merge commit from step 4, if one was made.
    2. Move the issue's project card to the **review column** — pushing the commit is **not** enough on its own, because Maestro classifies the run by the card's resulting column.
    3. **Exit 0.** Do not merge.
 
@@ -60,7 +60,7 @@ The operator answers (or fixes the environment) and moves the card back into the
 
 ## What the worker must never do
 
-- Never merge, never force-push, never edit a closed issue.
+- Never merge a pull request, never force-push, never rebase, never edit a closed issue. (Merging `origin/main` *into* the issue branch to recover from divergence, per step 4, is allowed and expected — it adds a merge commit without rewriting history, and is not the same as merging the PR.)
 - Never assume `main` is checked out — always work from `origin/main`.
 - Never wait on CI or ask whether to merge — open the PR, move the card to the review column, and exit.
 - Never use interactive tools like `AskUserQuestion`. Workers run headless (`claude -p ...`), so interactive prompts have no UI and go nowhere; operator-facing decisions go on the issue, per *When genuinely blocked*.
