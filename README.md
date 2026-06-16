@@ -10,131 +10,100 @@
 
 </div>
 
-Watches a GitHub Projects board and dispatches coding agents to work issues autonomously. Move a card into the trigger column; Maestro spawns a worker in an isolated git worktree, the worker opens a PR, you review and merge.
-
-## Requirements
-
-- Python 3.11+
-- [`uv`](https://docs.astral.sh/uv/) (or [`pipx`](https://pipx.pypa.io/)) to install Maestro
-- [`gh`](https://cli.github.com/), authenticated (`gh auth login`)
-- [`gh`](https://cli.github.com/), authenticated with the `project` scope (see Prerequisites below)
-- `git`
-- A coding-agent CLI on your `PATH` (e.g. `claude`)
+Maestro watches a GitHub Projects board and dispatches coding agents to work issues autonomously. Move a card into the trigger column; Maestro spawns a worker in an isolated git worktree, the worker opens a pull request, and you review and merge. It is a plain program, not a long-running AI session — install it once, then run it from inside any repo you want it to drive. The design and invariants are in [`docs/how-it-works.md`](docs/how-it-works.md).
 
 ## Prerequisites
 
-Maestro drives GitHub entirely through the `gh` CLI and stores no credentials of its own, so `gh` must be authenticated with the right scopes before you run anything. There is one blessed path — run it once:
-
-```
-gh auth login --hostname github.com --git-protocol https --web --scopes project
-```
-
-That grants the three scopes Maestro relies on:
-
-- `repo` — read issues and open pull requests (included by default).
-- `project` — read and write the Projects V2 board, so Maestro can move cards between columns. This is the scope new users most often miss.
-- `workflow` — included by default; lets a worker touch `.github/workflows` when an issue calls for it.
-
-Already logged in but missing the `project` scope? Add it without redoing the whole flow:
-
-```
-gh auth refresh -s project --hostname github.com
-```
-
-`maestro doctor` verifies both your auth status and the `project` scope, and prints the exact command above when either is missing. Maestro never authenticates for you — that stays a deliberate user action.
-
-### Headless worker permissions
-
-Maestro dispatches each worker as a headless `claude -p` process started with `--permission-mode bypassPermissions`. A headless worker has no human on hand to approve interactive permission prompts, so any stricter mode would stall it on its very first `gh` or `git` call. This is safe by construction: every worker runs in an isolated git worktree, never merges, and a human reviews each PR before it lands. You do not configure anything for this — it is the dispatch default — but if you point Maestro at a different worker CLI, that CLI must likewise run fully non-interactively. The dispatch model is described in [`docs/how-it-works.md`](docs/how-it-works.md).
+- Python 3.11+
+- [`uv`](https://docs.astral.sh/uv/) (or [`pipx`](https://pipx.pypa.io/)) to install Maestro
+- [`gh`](https://cli.github.com/) — you authenticate it in step 2 below
+- `git`
+- A coding-agent CLI on your `PATH` (e.g. `claude`)
 
 ## Install
 
-Maestro is a standalone tool — install it once, then run it from inside any repo you want it to drive:
+Two paths to the same result. **Manual install** is the canonical step-by-step. **Automatic install** hands those same steps to Claude so it does the legwork in your repo — it runs the Manual steps, it does not duplicate them, so there is one source of truth.
 
+### Automatic install
+
+Open Claude Code in the repo you want Maestro to drive and paste this prompt:
+
+> You are setting up Maestro to drive **this** repository. Follow the **Manual install** section of Maestro's README (<https://github.com/realShaneYost/maestro#manual-install>), executing each step for this repo. Rules:
+>
+> - Run the shell commands yourself, but **stop and confirm with me before anything that creates or mutates GitHub resources** — committing `maestro.yml`, running `maestro setup`, or touching the board.
+> - Some steps can only be done in a browser (creating the Projects V2 board, adding Status options, setting branch protection). Don't attempt those — collect them into a short checklist and hand it back to me with the exact values to enter.
+> - When you finish, run `maestro doctor` and report what passed and what I still need to do by hand.
+
+Because the prompt points at the Manual section rather than repeating its steps, the two never drift.
+
+### Manual install
+
+1. **Install the tool** (once per machine). Maestro lives in its own isolated environment, so it never pollutes a project's dependencies:
+
+   ```
+   uv tool install git+https://github.com/realShaneYost/maestro
+   ```
+
+   Prefer pipx? `pipx install git+https://github.com/realShaneYost/maestro` works the same way. For local development from a clone, `uv tool install .` inside it. Confirm with `maestro doctor`, which reports the version and whether you are running the installed tool or a source checkout.
+
+2. **Authenticate `gh` with the `project` scope.** Maestro shells out to `gh` and stores no credentials of its own:
+
+   ```
+   gh auth login --hostname github.com --git-protocol https --web --scopes project
+   ```
+
+   The `project` scope is the one new users most often miss — it lets Maestro read the board and move cards. Already logged in? Add it without redoing the flow: `gh auth refresh -s project --hostname github.com`.
+
+3. **Create the Projects V2 board** (browser). It needs a **Status** single-select field with your trigger, review, and blocked columns, plus a **Priority** field. A suggested layout and the exact field requirements are in [`docs/usage.md`](docs/usage.md#board-layout).
+
+4. **Write `maestro.yml`** at the root of the driven repo. It holds only board facts — no machine-specific paths — and is meant to be committed:
+
+   ```
+   cd /path/to/your-project
+   cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml
+   ```
+
+   Fill in at least `repo_slug`, `project_number`, and `trigger_column`. The full key reference is in [`docs/usage.md`](docs/usage.md#configuration-reference).
+
+5. **Bootstrap the board:**
+
+   ```
+   maestro setup
+   ```
+
+   This creates the Priority field if absent and checks the Status field for your configured columns, printing any you must add by hand. It is idempotent and never mutates the Status field.
+
+6. **Install the worker skill** in the driven repo. Copy [`maestro/templates/worker-skill.md`](maestro/templates/worker-skill.md) to `.claude/skills/cc-work/SKILL.md` (the path matches `worker_prompt`) and adapt its quality-gate commands and column names to your project. See [`docs/usage.md`](docs/usage.md#install-the-worker-skill).
+
+7. **Verify, then run:**
+
+   ```
+   maestro doctor          # read-only preflight checks
+   maestro once --dry-run  # one poll cycle that dispatches nothing
+   maestro run             # start the poll/dispatch loop
+   ```
+
+   Run `maestro run` in one terminal and check on it with `maestro status` from another. The full command set and recovery steps are in [`docs/usage.md`](docs/usage.md).
+
+## Writing issues Maestro can work
+
+Maestro needs no GitHub issue templates. A workable issue is just two Markdown sections in its body — the worker reads the first as its checklist and the second as its verification target:
+
+```markdown
+## Subtasks
+
+- [ ] First thing to do
+- [ ] Second thing to do
+
+## Acceptance criteria
+
+- What must be true when this is done.
+- An explicit verification command, if one applies.
 ```
-uv tool install git+https://github.com/realShaneYost/maestro
-```
 
-That puts `maestro` on your `PATH` in its own isolated environment, so it never pollutes a project's dependencies. (Prefer pipx? `pipx install git+https://github.com/realShaneYost/maestro` works the same way. For local development from a clone, `uv tool install .` inside it.)
+The worker ticks each `- [ ] ` subtask as it lands, so the issue body stays a live progress board. Order matters: subtasks are worked top to bottom. Declare any cross-issue ordering as GitHub's native **"Blocked by"** relationship — body text is invisible to the scheduler. See [`docs/usage.md`](docs/usage.md) for the board and dependency details.
 
-Confirm the install — `maestro doctor` reports the version and whether you are running the installed tool or a source checkout:
+## Learn more
 
-```
-maestro doctor
-```
-
-## Configure
-
-Each driven repo carries its own config at its root. Copy the template in:
-
-```
-cd /path/to/your-project
-cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml
-```
-
-Edit `maestro.yml` — at minimum `repo_slug`, `project_number`, and `trigger_column`. There is no `repo_path`: Maestro infers it from the git root when run from inside the repo, so the file holds only board facts and is meant to be committed. See [`docs/usage.md`](docs/usage.md) for the board settings Maestro expects and the full setup checklist.
-
-## What you edit and where
-
-Maestro keeps its editable dependencies in three fixed locations inside each driven repo. They can't be consolidated into one folder — each host tool dictates its own path — so the canonical record is a logical manifest (`maestro/manifest.py`) rather than a single directory. `maestro doctor` reports each one and whether it is present.
-
-| Dependency | Location | Required | Source template |
-|---|---|---|---|
-| Worker skill | `.claude/skills/cc-work/SKILL.md` | yes | `maestro/templates/worker-skill.md` |
-| Config | `maestro.yml` (repo root) | yes | `maestro/templates/maestro.example.yml` |
-| CI workflow | `.github/workflows/` | optional | — |
-
-When Maestro changes, these are the only files you reconcile. Run `maestro doctor` to see them listed with their presence at a glance, or `maestro update` to upgrade the tool and get a drift report against the shipped templates — including any new `maestro.yml` keys. `maestro update` never overwrites your edits; it reports drift and leaves the reconciliation to you.
-
-## Use
-
-Run every command **from inside the driven repo** — Maestro reads `./maestro.yml` and infers the repo from the git root:
-
-```
-cd /path/to/your-project
-maestro setup               # bootstrap the board's Priority field (idempotent)
-maestro doctor              # read-only preflight checks
-maestro update              # reinstall the tool and report dependency drift
-maestro add <issue>         # add an existing issue to the board in one step
-maestro run                 # start the poll/dispatch loop
-maestro status              # snapshot of the board and recent activity
-maestro status --watch      # live-refreshing worker-log view
-maestro once --dry-run      # one poll; explain each dispatch decision
-maestro clean               # prune finished worktrees and stale branches
-```
-
-Worktrees, logs, and the run log live in a sibling directory, `../your-project.maestro/`, so they never touch the repo's working tree. Run `maestro run` in one terminal; check on it with `maestro status` from another. First-time setup and recovery are both in [`docs/usage.md`](docs/usage.md); the design is in [`docs/how-it-works.md`](docs/how-it-works.md).
-
-## Adding an issue to the board
-
-Creating a GitHub issue does **not** put it on the Projects board — Maestro only ever sees cards that are already on it. Adding one by hand is a two-step `gh` dance (`gh project item-add`, then `gh project item-edit` to set Status), and the second step takes the Status option's node ID, which GitHub *regenerates* whenever you edit a column. A cached ID then fails silently. `maestro add` collapses both steps into one and reads the live option ID at the moment it writes, so it never trips on a stale ID:
-
-```
-gh issue create --title "Fix the thing"   # creates the issue (not on the board)
-maestro add 42                            # adds #42 to the board in its leftmost column
-maestro add 42 --status "Backlog"         # ...or name the column explicitly
-```
-
-By default the card lands in the board's **leftmost Status column** — the conventional `Backlog`/`Todo` entry column — and `maestro add` prints which column it chose. It deliberately does *not* drop the card straight into the trigger column: adding an issue should not also dispatch it. When you are ready to work the issue, move its card into the trigger column (or run `maestro add 42 --status "In Progress"` if that is your trigger column) and the next poll picks it up. An unknown `--status` is rejected with the board's actual column names listed.
-
-## Continuous integration (optional)
-
-CI is an opt-in enhancement, not a requirement. Maestro is fully functional without it: workers open PRs, rework them off human review, and move their cards whether or not any checks run. The one thing CI buys you is an **automated rework signal** — when a worker's PR fails its checks, the worker's rework mode picks up the failures on the next dispatch and fixes them, on top of the human review it already responds to.
-
-Because of that, CI ships **disabled by default**, gated behind the `manage_ci` key in `maestro.yml`. An unconfigured generic pipeline is worse than none: an enabled-but-empty workflow either lies green (false confidence) or reds every PR (a false rework loop), and both poison the very signal CI exists to provide. So enabling it is a deliberate act you take once a real test command is in place.
-
-To enable it, set `manage_ci: true` and run `maestro setup`. Setup writes a minimal, language-agnostic skeleton to `.github/workflows/maestro-ci.yml` (you commit it) and never overwrites an existing file. The skeleton triggers on `workflow_dispatch` **only**, so it never auto-fires until you replace its placeholder step with your project's real build/test command and add the `pull_request:` / `push:` triggers you want — the file's header comment walks through both. With `manage_ci` left at its default `false`, `maestro setup` writes nothing and the repo is untouched; `maestro doctor` notes the present-but-disabled state with a one-line enable hint.
-
-## Ordering dependent issues
-
-Maestro dispatches every ready card in the trigger column in parallel. When one issue must land before another — issue #38 builds on a module issue #37 creates — you **must** declare the ordering as GitHub's native **"blocked by"** relationship. Maestro reads only that relationship; a dependency written as body text, a task-list reference, or a `Blocked by #37` line in the issue body is invisible to it, and both cards will be dispatched at once. Two workers then race on the same files and collide in a merge conflict.
-
-To set the relationship, on the issue that must wait (the *dependent*, #38 in the example):
-
-1. Open the issue on GitHub.
-2. In the right-hand sidebar, find **Relationships** (older layouts label it **Development** → **Add relationship**).
-3. Choose **Blocked by**, search for the blocking issue (#37), and add it.
-
-The dependent now shows a "Blocked by #37" badge. While #37 is open, Maestro holds #38 back even when its card sits in the trigger column, and `maestro status` flags it inline — `#38  build the CLI  — skipped — blocked by open issue(s): #37`. The moment #37 closes, #38 becomes dispatchable on the next poll. Run `maestro once --dry-run` to preview the same decision before starting the loop.
-
-Only the native relationship gates dispatch — sub-issues (`trackedIssues`) and free-text "blocked by" mentions do not.
+- [`docs/how-it-works.md`](docs/how-it-works.md) — the design, the dispatch loop, and the invariants.
+- [`docs/usage.md`](docs/usage.md) — the configuration reference, full command set, board layout, and recovery.
