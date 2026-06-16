@@ -31,8 +31,10 @@ from maestro.theme import ThemeError, load_theme
 from maestro.update import (
     DependencyReconciliation,
     ReconcileStatus,
+    ReconcileSummary,
     UpdateReport,
     run_update,
+    summarize_reconciliation,
 )
 from maestro.worktree import WorktreeError, WorktreeManager
 
@@ -340,14 +342,41 @@ def _print_update_report(console: Console, report: UpdateReport) -> None:
     console.print("\nEditable-dependency reconciliation:")
     for item in report.reconciliations:
         _print_reconciliation(console, item)
-    drifted = [r for r in report.reconciliations if r.status is ReconcileStatus.DRIFTED]
-    missing = [r for r in report.reconciliations if r.status is ReconcileStatus.MISSING]
-    if drifted or missing:
-        console.print(
-            "\nNothing was overwritten. Review the flagged file(s) above and " "reconcile by hand."
-        )
-    else:
+    _print_reconcile_summary(console, summarize_reconciliation(report.reconciliations))
+
+
+def _print_reconcile_summary(console: Console, summary: ReconcileSummary) -> None:
+    """Render the reconciliation roll-up, never claiming sync for a no-op.
+
+    "All editable dependencies are in sync." prints only when something was
+    actually compared and matched and nothing drifted, went missing, or could not
+    be verified. Anything that could not be compared yields a WARNING summarizing
+    which and why, and a run that compared nothing at all is reported as a no-op —
+    so a vacuous reconciliation can never read as a clean bill of health.
+    """
+    if summary.all_in_sync:
         console.print("\nAll editable dependencies are in sync.")
+        return
+    if summary.unverifiable:
+        noun = "dependency" if len(summary.unverifiable) == 1 else "dependencies"
+        console.print(
+            f"\n[error]WARNING: could not verify {len(summary.unverifiable)} {noun} — "
+            "not claiming sync.[/error]"
+        )
+        for item in summary.unverifiable:
+            console.print(
+                f"  [error]?[/error]  [issue]{item.name}[/issue]  "
+                f"[message]{item.detail}[/message]"
+            )
+    if summary.needs_attention:
+        console.print(
+            "\nNothing was overwritten. Review the flagged file(s) above and reconcile by hand."
+        )
+    if summary.nothing_compared:
+        console.print(
+            "\n[error]Nothing was compared[/error] — no dependency ships a packaged "
+            "template to check against, so this is a no-op, not a clean bill of health."
+        )
 
 
 def _cmd_update(args: argparse.Namespace) -> int:

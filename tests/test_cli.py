@@ -2,7 +2,18 @@
 
 from __future__ import annotations
 
-from maestro.cli import build_parser
+import io
+
+from rich.console import Console
+
+from maestro.cli import _print_reconcile_summary, build_parser
+from maestro.update import DependencyReconciliation, ReconcileStatus, summarize_reconciliation
+
+
+def _render_summary(*reconciliations: DependencyReconciliation) -> str:
+    console = Console(file=io.StringIO(), force_terminal=False, no_color=True, width=200)
+    _print_reconcile_summary(console, summarize_reconciliation(reconciliations))
+    return console.file.getvalue()
 
 
 def test_parser_accepts_all_subcommands():
@@ -45,3 +56,37 @@ def test_once_dry_run_flag():
 
 def test_clean_all_flag():
     assert build_parser().parse_args(["clean", "--all"]).all is True
+
+
+def _recon(name: str, status: ReconcileStatus) -> DependencyReconciliation:
+    return DependencyReconciliation(name, name, status, "cannot compare")
+
+
+def test_update_summary_prints_in_sync_when_all_matched():
+    out = _render_summary(
+        _recon("worker skill", ReconcileStatus.IN_SYNC),
+        _recon("config", ReconcileStatus.IN_SYNC),
+        _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+    )
+    assert "All editable dependencies are in sync." in out
+
+
+def test_update_summary_uncomparable_warns_and_never_claims_sync():
+    """The bug fix: an unverifiable dependency must warn, not print 'in sync'."""
+    out = _render_summary(
+        _recon("worker skill", ReconcileStatus.TEMPLATE_UNAVAILABLE),
+        _recon("config", ReconcileStatus.TEMPLATE_UNAVAILABLE),
+        _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+    )
+    assert "in sync" not in out
+    assert "WARNING" in out
+    assert "could not verify 2 dependencies" in out
+
+
+def test_update_summary_nothing_compared_is_distinct_from_clean():
+    out = _render_summary(
+        _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+        _recon("other", ReconcileStatus.NO_TEMPLATE),
+    )
+    assert "in sync" not in out
+    assert "Nothing was compared" in out

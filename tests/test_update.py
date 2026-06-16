@@ -7,6 +7,7 @@ from pathlib import Path
 from maestro.config import Config
 from maestro.install import InstallInfo, InstallSource
 from maestro.update import (
+    DependencyReconciliation,
     ReconcileStatus,
     UvRunner,
     _installed_version,
@@ -14,6 +15,7 @@ from maestro.update import (
     _upgrade_tool,
     reconcile,
     run_update,
+    summarize_reconciliation,
 )
 
 
@@ -215,6 +217,86 @@ def test_reconcile_surfaces_new_config_keys(tmp_path):
 
 def test_new_config_keys_handles_unparsable_yaml():
     assert _new_config_keys("repo_slug: x\n", ": : not yaml\n") == ()
+
+
+# --- reconciliation summary ------------------------------------------------
+
+
+def _recon(name: str, status: ReconcileStatus) -> DependencyReconciliation:
+    return DependencyReconciliation(name, name, status, "detail")
+
+
+def test_summary_in_sync_only_when_everything_matched():
+    summary = summarize_reconciliation(
+        (
+            _recon("worker skill", ReconcileStatus.IN_SYNC),
+            _recon("config", ReconcileStatus.IN_SYNC),
+            _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+        )
+    )
+    assert summary.all_in_sync is True
+    assert summary.nothing_compared is False
+
+
+def test_summary_uncomparable_dependency_is_not_in_sync():
+    """The bug: an unverifiable dependency must never roll up to 'in sync'."""
+    summary = summarize_reconciliation(
+        (
+            _recon("worker skill", ReconcileStatus.TEMPLATE_UNAVAILABLE),
+            _recon("config", ReconcileStatus.TEMPLATE_UNAVAILABLE),
+            _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+        )
+    )
+    assert summary.all_in_sync is False
+    assert {r.name for r in summary.unverifiable} == {"worker skill", "config"}
+
+
+def test_summary_drift_blocks_in_sync():
+    summary = summarize_reconciliation(
+        (
+            _recon("worker skill", ReconcileStatus.IN_SYNC),
+            _recon("config", ReconcileStatus.DRIFTED),
+        )
+    )
+    assert summary.all_in_sync is False
+    assert {r.name for r in summary.needs_attention} == {"config"}
+
+
+def test_summary_nothing_compared_is_a_no_op_not_sync():
+    """All deps lacking a template compared nothing — never a clean bill."""
+    summary = summarize_reconciliation(
+        (
+            _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+            _recon("other", ReconcileStatus.NO_TEMPLATE),
+        )
+    )
+    assert summary.all_in_sync is False
+    assert summary.nothing_compared is True
+
+
+def test_summary_partial_verification_warns_without_claiming_sync():
+    summary = summarize_reconciliation(
+        (
+            _recon("worker skill", ReconcileStatus.IN_SYNC),
+            _recon("config", ReconcileStatus.TEMPLATE_UNAVAILABLE),
+        )
+    )
+    assert summary.all_in_sync is False
+    assert summary.nothing_compared is False
+    assert [r.name for r in summary.verified] == ["worker skill"]
+    assert [r.name for r in summary.unverifiable] == ["config"]
+
+
+def test_reconcile_with_no_templates_does_not_report_in_sync(tmp_path):
+    """End-to-end: a repo whose templates are all unavailable is not 'in sync'."""
+    package_root = tmp_path / "pkg"  # nothing staged — every template unreadable
+    repo = tmp_path / "repo"
+    _write(repo / ".claude" / "skills" / "cc-work" / "SKILL.md", "skill\n")
+    _write(repo / "maestro.yml", "repo_slug: x\n")
+
+    summary = summarize_reconciliation(reconcile(repo, package_root))
+    assert summary.all_in_sync is False
+    assert {r.name for r in summary.unverifiable} == {"worker skill", "config"}
 
 
 # --- end-to-end ------------------------------------------------------------
