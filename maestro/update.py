@@ -413,6 +413,89 @@ def reconcile(
     return tuple(_reconcile_dependency(dep, repo_path, package_root) for dep in MANIFEST)
 
 
+@dataclass(frozen=True)
+class ReconcileSummary:
+    """A roll-up over every dependency's reconciliation, for the CLI to render.
+
+    The four buckets are mutually exclusive and together partition the
+    reconciliation results. They exist so the CLI never rolls "compared nothing"
+    up into a green "in sync": a clean bill of health requires that something was
+    actually compared and matched.
+
+    Attributes:
+        verified: Dependencies compared against their template and found to match.
+        needs_attention: Dependencies that drifted from, or are missing relative
+            to, their template — actionable, but the comparison itself succeeded.
+        unverifiable: Dependencies whose comparison could not be made because the
+            packaged template (or the repo copy) could not be read. These are the
+            false-positive risk: nothing about them is known to be in sync.
+        not_applicable: Dependencies that ship no template by design, so there was
+            nothing to compare. Benign — neither a problem nor evidence of sync.
+    """
+
+    verified: tuple[DependencyReconciliation, ...]
+    needs_attention: tuple[DependencyReconciliation, ...]
+    unverifiable: tuple[DependencyReconciliation, ...]
+    not_applicable: tuple[DependencyReconciliation, ...]
+
+    @property
+    def all_in_sync(self) -> bool:
+        """Whether every comparable dependency was compared and matched.
+
+        True only when at least one dependency was actually compared and matched
+        and none drifted, went missing, or could not be verified. A reconciliation
+        that compared nothing is never "in sync".
+        """
+        return bool(self.verified) and not self.needs_attention and not self.unverifiable
+
+    @property
+    def nothing_compared(self) -> bool:
+        """Whether no dependency could be compared at all.
+
+        True when nothing matched, drifted, went missing, or was unverifiable —
+        every dependency simply had no template to compare against. Such a run is
+        a no-op, distinct from a verified-clean one and never reported as success.
+        """
+        return not (self.verified or self.needs_attention or self.unverifiable)
+
+
+# Statuses that mean "compared, and the comparison found something to act on."
+_ATTENTION_STATUSES = frozenset({ReconcileStatus.DRIFTED, ReconcileStatus.MISSING})
+
+
+def summarize_reconciliation(
+    reconciliations: tuple[DependencyReconciliation, ...],
+) -> ReconcileSummary:
+    """Bucket reconciliation results into the roll-up the CLI renders.
+
+    Args:
+        reconciliations: One :class:`DependencyReconciliation` per manifest entry.
+
+    Returns:
+        A :class:`ReconcileSummary` partitioning the results so that "in sync" can
+        be claimed only when something was actually compared and matched.
+    """
+    verified: list[DependencyReconciliation] = []
+    needs_attention: list[DependencyReconciliation] = []
+    unverifiable: list[DependencyReconciliation] = []
+    not_applicable: list[DependencyReconciliation] = []
+    for item in reconciliations:
+        if item.status is ReconcileStatus.IN_SYNC:
+            verified.append(item)
+        elif item.status in _ATTENTION_STATUSES:
+            needs_attention.append(item)
+        elif item.status is ReconcileStatus.TEMPLATE_UNAVAILABLE:
+            unverifiable.append(item)
+        else:  # NO_TEMPLATE — ships nothing to compare against, by design.
+            not_applicable.append(item)
+    return ReconcileSummary(
+        verified=tuple(verified),
+        needs_attention=tuple(needs_attention),
+        unverifiable=tuple(unverifiable),
+        not_applicable=tuple(not_applicable),
+    )
+
+
 def run_update(
     config: Config,
     *,
