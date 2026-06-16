@@ -119,7 +119,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     config, paths = _load(args)
     console = Console(theme=load_theme(config.theme))
     if args.watch:
-        watch(console, paths.logs_dir, config.repo_slug)
+        watch(console, paths.logs_dir, config.repo_slug, gh_timeout=config.gh_timeout)
         return 0
     try:
         board = _trigger(config).poll()
@@ -148,7 +148,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             config.review_column,
             held,
         )
-    render_recent(console, paths.logs_dir, config.repo_slug)
+    render_recent(console, paths.logs_dir, config.repo_slug, gh_timeout=config.gh_timeout)
     return 0
 
 

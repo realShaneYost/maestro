@@ -38,6 +38,9 @@ Maestro expects:
 | `worker_prompt` | `"/cc-work {issue}"` | Prompt template handed to each worker. Must contain `{issue}`. |
 | `theme` | `"nord"` | Theme for `maestro status` — `nord`, `dark`, or `light`. |
 | `worktree_setup` | `null` | Shell command run inside each fresh worktree to provision its environment. **Set this for any project whose workers change package code** — see *Worktree environment* below. |
+| `priority_options` | `["Critical", "High", "Normal", "Low"]` | Priority-field options `maestro setup` seeds (highest rank first) when the board has no Priority field. Consulted only at setup time — the scheduler ranks live issues by the board's own option order. Override it to match a team's scale (e.g. `["P0", "P1", "P2"]`). |
+| `manage_ci` | `false` | Whether `maestro setup` materializes the optional CI workflow skeleton into `.github/workflows/`. Off by default; leave it off until a real test command is wired in. |
+| `gh_timeout` | `15` | Seconds a synchronous `gh` call may run before it is abandoned. Used by the read-only issue-title lookups behind `maestro status`; raise it for slow networks. |
 
 `trigger_column`, `review_column`, and `blocked_column` must be three **distinct** values, or the config is rejected. Runtime artifacts (worktrees, logs, `runs.jsonl`) land in the sibling `../<repo>.maestro/` directory — nothing to gitignore.
 
