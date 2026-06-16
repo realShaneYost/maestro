@@ -35,6 +35,7 @@ def test_loads_minimal_config_and_applies_defaults(tmp_path):
     assert config.review_column == "In Review"
     assert config.blocked_column == "Blocked"
     assert config.manage_ci is False
+    assert config.max_consecutive_failures == 3
 
 
 def test_manage_ci_defaults_off_and_accepts_true(tmp_path):
@@ -84,6 +85,18 @@ def test_repo_path_must_be_a_directory(tmp_path):
 
 def test_non_positive_max_concurrent_raises(tmp_path):
     body = _MINIMAL + "max_concurrent: 0\n"
+    with pytest.raises(ConfigError, match="positive integer"):
+        load_config(_write(tmp_path, body), repo_path=tmp_path)
+
+
+def test_max_consecutive_failures_is_loaded_when_set(tmp_path):
+    body = _MINIMAL + "max_consecutive_failures: 5\n"
+    config = load_config(_write(tmp_path, body), repo_path=tmp_path)
+    assert config.max_consecutive_failures == 5
+
+
+def test_non_positive_max_consecutive_failures_raises(tmp_path):
+    body = _MINIMAL + "max_consecutive_failures: 0\n"
     with pytest.raises(ConfigError, match="positive integer"):
         load_config(_write(tmp_path, body), repo_path=tmp_path)
 

@@ -20,11 +20,11 @@ from typing import Protocol
 
 from maestro.config import Config
 from maestro.core.models import BoardState, Outcome, RunRecord
-from maestro.core.scheduler import dispatchable_issues
+from maestro.core.scheduler import dispatchable_issues, failure_cap_reason
 from maestro.core.trigger import TriggerSource
 from maestro.dispatch import build_worker_command, spawn_worker
 from maestro.github import GitHubError
-from maestro.runlog import append_run
+from maestro.runlog import append_run, consecutive_failures, read_runs
 from maestro.worktree import WorktreeError, WorktreeManager
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,11 @@ class Loop:
         # A `maestro run` restart starts the set empty by construction, which
         # preserves the documented rework path of dropping a card back in.
         self._recently_dispatched: set[int] = set()
+        # Issues already logged as held by the failure cap this session. The
+        # streak is durable in the run log, so without this de-duplication the
+        # warning would repeat every poll; an issue drops out the moment it is
+        # no longer capped, so a later re-cap warns afresh.
+        self._capped_logged: set[int] = set()
 
     def tick(self) -> None:
         """Run one cycle: poll, then reap and dispatch against that board.
@@ -156,11 +161,55 @@ class Loop:
         }
         self._reap(board)
         in_flight = set(self._workers) | self._recently_dispatched
+        failure_counts = consecutive_failures(read_runs(self._runs_log))
+        self._log_failure_caps(board, in_flight, failure_counts)
         ready = dispatchable_issues(
-            board.issues, board.open_numbers, in_flight, self._config.max_concurrent
+            board.issues,
+            board.open_numbers,
+            in_flight,
+            self._config.max_concurrent,
+            failure_counts,
+            self._config.max_consecutive_failures,
         )
         for issue in ready:
             self._dispatch(issue.number)
+
+    def _log_failure_caps(
+        self, board: BoardState, in_flight: set[int], failure_counts: dict[int, int]
+    ) -> None:
+        """Warn once per issue the consecutive-failure cap is holding back.
+
+        A capped issue is one that is in the trigger column, still open, not in
+        flight, and whose failure streak has reached ``max_consecutive_failures``
+        — it would otherwise dispatch. It is logged a single time per session
+        (the streak is durable in the run log, so an undeduplicated warning would
+        repeat every poll), and re-logged if it later re-caps after a clean run.
+        The card is deliberately left untouched: the run loop never writes to
+        GitHub, so an operator clears the cap by fixing the issue and moving its
+        card, which resets the streak on the next clean run.
+
+        Args:
+            board: The board state from this tick's poll.
+            in_flight: Issue numbers counted as having a live worker this tick.
+            failure_counts: Per-issue consecutive-failure streaks from the run log.
+        """
+        capped: set[int] = set()
+        for issue in board.issues:
+            if (
+                not issue.in_trigger_column
+                or issue.number not in board.open_numbers
+                or issue.number in in_flight
+            ):
+                continue
+            reason = failure_cap_reason(
+                issue, failure_counts, self._config.max_consecutive_failures
+            )
+            if reason is None:
+                continue
+            capped.add(issue.number)
+            if issue.number not in self._capped_logged:
+                logger.warning("Holding issue #%d — %s", issue.number, reason)
+        self._capped_logged = capped
 
     def run(self) -> None:
         """Tick forever, sleeping between cycles, until interrupted.

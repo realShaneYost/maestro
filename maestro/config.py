@@ -25,6 +25,7 @@ _DEFAULTS: dict[str, Any] = {
     "review_column": "In Review",
     "blocked_column": "Blocked",
     "manage_ci": False,
+    "max_consecutive_failures": 3,
 }
 
 
@@ -60,6 +61,11 @@ class Config:
             an opt-in enhancement that only adds the worker's automated rework
             signal, and an unconfigured pipeline would poison that signal, so
             enabling it is a deliberate act once a real test command is in place.
+        max_consecutive_failures: How many times an issue may fail in a row
+            before the scheduler stops dispatching it. The streak is derived
+            from the run log and reset by any clean run (``done`` or
+            ``blocked``); reaching the cap holds the issue back so a stuck issue
+            cannot be redispatched forever, each retry a full worker session.
     """
 
     repo_path: Path
@@ -74,6 +80,7 @@ class Config:
     review_column: str
     blocked_column: str
     manage_ci: bool = False
+    max_consecutive_failures: int = 3
 
 
 def load_config(path: Path, *, repo_path: Path) -> Config:
@@ -164,6 +171,7 @@ def _build_config(values: dict[str, Any]) -> Config:
         review_column=review_column,
         blocked_column=blocked_column,
         manage_ci=_bool(values, "manage_ci"),
+        max_consecutive_failures=_positive_int(values, "max_consecutive_failures"),
     )
 
 
