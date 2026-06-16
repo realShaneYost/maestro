@@ -1,57 +1,29 @@
 # Using Maestro
 
-A linear setup checklist, then the command reference and how to recover when something goes sideways. Maestro is installed once and run **from the root of each repo it drives** — it reads `./maestro.yml` and infers the repo from the git root. Every command below is run from inside the driven repo.
+The depth reference behind the [README](../README.md): the board layout Maestro expects, the full configuration key set, the command set, and how to recover when something goes sideways. **Install steps live in the README's [Manual install](../README.md#manual-install) section — they are not repeated here.** Maestro is installed once and run **from the root of each repo it drives**; it reads `./maestro.yml` and infers the repo from the git root, so every command below is run from inside the driven repo.
 
 For the design behind all this, see [`how-it-works.md`](how-it-works.md).
 
-## Requirements
-
-- Python 3.11+
-- [`gh`](https://cli.github.com/), authenticated (`gh auth login`)
-- `git`
-- A coding-agent CLI on your `PATH` (e.g. `claude`)
-
 Maestro stores no credentials. It shells out to `gh` and `git` and trusts whatever they are already authenticated as. No keys live in the repo, in `maestro.yml`, or in logs.
 
-## 1. Install Maestro (once per machine)
-
-```
-pipx install git+https://github.com/realShaneYost/maestro
-```
-
-Use [`pipx`](https://pipx.pypa.io/) (or `uv tool install`) so Maestro lives in its own isolated environment and never becomes a dependency of the repos it drives. For local development from a clone: `git clone <repo> && cd maestro && uv tool install .`.
-
-## 2. Authenticate `gh` with the `project` scope
-
-```
-gh auth status
-gh auth refresh -s project
-```
-
-The `project` scope is required to read the board and, during `maestro setup`, to create the Priority field.
-
-## 3. Set up the Projects V2 board
+## Board layout
 
 Maestro expects:
 
 - A **Projects V2 board** whose number you set as `project_number`.
 - A **Status** single-select field. Three of its options matter: the **trigger** column (the dispatch signal), the **review** column (where the worker parks the card after opening its PR), and the **blocked** column (where it parks the card when it can't proceed). Maestro classifies a run by the column the card ends in, so these names must match `maestro.yml`, the worker skill, and the board **exactly**.
-- A **Priority** single-select field. Options can be named anything; **top-to-bottom order is the dispatch rank** (index 0 first). `maestro setup` creates this for you if it's missing — see step 5.
+- A **Priority** single-select field. Options can be named anything; **top-to-bottom order is the dispatch rank** (index 0 first). `maestro setup` creates this for you if it's missing.
 - Suggested column layout: `Backlog`, `In Progress` (trigger), `In Review`, `Blocked`, `Done`.
 
-**Issue dependencies:** Maestro reads GitHub's native **"Blocked by"** relationships. An issue is held back from dispatch while any issue it is blocked by is still open. Set these in the issue sidebar.
+**Issue dependencies:** Maestro reads GitHub's native **"Blocked by"** relationships. An issue is held back from dispatch while any issue it is blocked by is still open. Set these in the issue sidebar — body text and task-list references are invisible to the scheduler.
 
 **Branch protection:** `main` should require a PR before merging. Required reviewers may be `0` for a solo workflow — Maestro never merges, so a human still reviews and merges by hand. Enabling "automatically delete head branches" keeps stale branches down (`maestro clean` also handles them).
 
-## 4. Write `maestro.yml` at the repo root
+**What `maestro setup` does:** it is narrowly scoped and idempotent. It ensures a **Priority** single-select field exists — creating one with options `Critical`, `High`, `Normal`, `Low` if absent, and leaving an existing one completely untouched — and checks the **Status** field has your configured trigger, review, and blocked columns. It **never** mutates the Status field; if a column is missing, it prints exactly which option names to add by hand (**⋯ → Settings → Fields → Status → Add option**). This is the one deliberate exception to "Maestro's authority ends at PR-open"; the `run` loop itself never writes to GitHub.
 
-Copy the template into the driven repo and fill it in. It holds only board facts (no machine-specific paths) and is meant to be **committed**:
+## Configuration reference
 
-```
-cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml
-```
-
-There is no `repo_path` — Maestro infers it from the git root. The keys:
+`maestro.yml` lives at the root of the driven repo. There is no `repo_path` — Maestro infers it from the git root, so the file holds only board facts and is meant to be **committed**. Copy the template in with `cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml`, then fill it in:
 
 | Key | Default | What it does |
 |---|---|---|
@@ -69,33 +41,9 @@ There is no `repo_path` — Maestro infers it from the git root. The keys:
 
 `trigger_column`, `review_column`, and `blocked_column` must be three **distinct** values, or the config is rejected. Runtime artifacts (worktrees, logs, `runs.jsonl`) land in the sibling `../<repo>.maestro/` directory — nothing to gitignore.
 
-## 5. Bootstrap the board
+## Install the worker skill
 
-```
-maestro setup
-```
-
-`setup` is narrowly scoped and idempotent:
-
-- Ensures a **Priority** single-select field exists. If absent, it creates one with options `Critical`, `High`, `Normal`, `Low`. If one already exists, **`setup` leaves it completely untouched.**
-- Checks the **Status** field has your configured trigger, review, and blocked columns. It **never** mutates the Status field — if a column is missing, it prints exactly which option names to add by hand.
-
-Running it twice changes nothing the second time. This is the one deliberate exception to "Maestro's authority ends at PR-open"; the `run` loop itself never writes to GitHub.
-
-If `setup` listed missing Status options, add them on the board: **⋯ → Settings → Fields → Status → Add option**, named exactly as Maestro expects.
-
-## 6. Install the worker skill in the driven repo
-
-The repo must supply the skill named in `worker_prompt`. For Claude Code, that's `.claude/skills/<name>/SKILL.md`, where `<name>` is the first token after the `/` (default `cc-work`). [`maestro/templates/worker-skill.md`](../maestro/templates/worker-skill.md) is the contract — copy it across and adapt the quality-gate commands and column names. The skill's column names **must match** `maestro.yml` and the live board exactly.
-
-## 7. Verify, then dry-run
-
-```
-maestro doctor          # read-only preflight checks; exits non-zero on failure
-maestro once --dry-run  # one poll cycle that dispatches nothing
-```
-
-`doctor` mutates nothing; fix any failures and re-run (warnings don't affect exit code). `once --dry-run` lists each board issue and what the scheduler *would* do ("would dispatch", "skipped — already in flight", "skipped — blocked by open issue(s): #71", …). If it looks right, the live `run` behaves identically.
+The driven repo must supply the skill named in `worker_prompt`. For Claude Code, that's `.claude/skills/<name>/SKILL.md`, where `<name>` is the first token after the `/` (default `cc-work`). [`maestro/templates/worker-skill.md`](../maestro/templates/worker-skill.md) is the contract — copy it across and adapt the quality-gate commands and column names. The skill's column names **must match** `maestro.yml` and the live board exactly.
 
 ## Command reference
 
@@ -104,6 +52,7 @@ Run all of these from inside the driven repo:
 ```
 maestro setup               # bootstrap the board's Priority field (idempotent)
 maestro doctor              # read-only preflight checks
+maestro update              # reinstall the tool and report dependency drift
 maestro add <issue>         # add an existing issue to the board in one step
 maestro run                 # start the poll/dispatch loop
 maestro status              # snapshot of the board and recent activity
@@ -113,7 +62,9 @@ maestro logs <issue>        # dump an issue's latest-run worker log
 maestro clean               # prune finished worktrees and stale branches
 ```
 
-Run `maestro run` in one terminal; check on it with `maestro status` from another.
+Run `maestro run` in one terminal; check on it with `maestro status` from another. `maestro once --dry-run` lists each board issue and what the scheduler *would* do ("would dispatch", "skipped — already in flight", "skipped — blocked by open issue(s): #71", …) without dispatching anything; the live `run` behaves identically.
+
+`maestro doctor` mutates nothing and exits non-zero on failure (warnings don't affect the exit code). It also reports the three editable dependencies Maestro keeps in each driven repo — the worker skill (`.claude/skills/cc-work/SKILL.md`), the config (`maestro.yml`), and the optional CI workflow (`.github/workflows/`) — and whether each is present. `maestro update` reinstalls the tool and reports drift against the shipped templates, including any new `maestro.yml` keys; it never overwrites your edits.
 
 ## Adding an issue to the board
 
@@ -126,6 +77,14 @@ maestro add 42 --status "Backlog"         # ...or target a named column
 ```
 
 By default the card lands in the board's **leftmost Status column** (the conventional `Backlog`/`Todo` entry column), and the command reports which column it chose. It does not place the card in the trigger column — adding an issue should not dispatch it; you move it there when it is ready to work. Done by hand this is two `gh` calls, and the second (`gh project item-edit`) needs the Status option's node ID, which GitHub regenerates whenever a column is edited — a cached ID fails silently. `maestro add` reads the live option ID at write time, so it never hits a stale-ID failure. An unknown `--status` is rejected with the board's actual column names listed.
+
+## Continuous integration (optional)
+
+CI is an opt-in enhancement, not a requirement. Maestro is fully functional without it: workers open PRs, rework them off human review, and move their cards whether or not any checks run. The one thing CI buys you is an **automated rework signal** — when a worker's PR fails its checks, the worker's rework mode picks up the failures on the next dispatch and fixes them, on top of the human review it already responds to.
+
+Because of that, CI ships **disabled by default**, gated behind the `manage_ci` key in `maestro.yml`. An unconfigured generic pipeline is worse than none: an enabled-but-empty workflow either lies green (false confidence) or reds every PR (a false rework loop), and both poison the very signal CI exists to provide. So enabling it is a deliberate act you take once a real test command is in place.
+
+To enable it, set `manage_ci: true` and run `maestro setup`. Setup writes a minimal, language-agnostic skeleton to `.github/workflows/maestro-ci.yml` (you commit it) and never overwrites an existing file. The skeleton triggers on `workflow_dispatch` **only**, so it never auto-fires until you replace its placeholder step with your project's real build/test command and add the `pull_request:` / `push:` triggers you want — the file's header comment walks through both. With `manage_ci` left at its default `false`, `maestro setup` writes nothing and the repo is untouched; `maestro doctor` notes the present-but-disabled state with a one-line enable hint.
 
 ## Priority
 
