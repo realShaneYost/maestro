@@ -279,13 +279,15 @@ def check_dependency(dependency: Dependency, repo_path: Path) -> CheckResult:
 def check_ci_template(
     repo_path: Path, manage_ci: bool, package_root: Traversable = PACKAGE_FILES
 ) -> CheckResult:
-    """Report the optional CI skeleton's managed state, with an enable hint.
+    """Report the optional CI skeleton's managed state.
 
     CI is an opt-in enhancement: its only payoff is the worker's automated rework
-    signal (failed checks) on top of human review. The skeleton therefore ships
-    disabled. This check surfaces that present-but-disabled state so an operator
-    knows the template exists and how to turn it on, WARNs when it is enabled but
-    not yet installed, and PASSes once the managed workflow is in place.
+    signal (failed checks) on top of human review, and Maestro runs fine without
+    it. So a disabled ``manage_ci`` is a deliberate opt-out, not a problem — it
+    PASSes, noting any CI the repo already runs itself. WARNs are reserved for a
+    genuine misconfiguration: ``manage_ci`` is on but the managed workflow is
+    unavailable or not yet installed. PASSes once the managed workflow is in
+    place.
 
     Args:
         repo_path: Root of the driven repository.
@@ -297,11 +299,27 @@ def check_ci_template(
         A :class:`CheckResult` named after the CI-workflow dependency.
     """
     if not manage_ci:
+        workflows_dir = repo_path / ".github" / "workflows"
+        existing = (
+            sorted(
+                p.name
+                for p in workflows_dir.iterdir()
+                if p.is_file() and p.suffix in {".yml", ".yaml"}
+            )
+            if workflows_dir.is_dir()
+            else []
+        )
+        if existing:
+            return CheckResult(
+                CI_WORKFLOW,
+                CheckLevel.PASS,
+                f"CI present in .github/workflows/ ({', '.join(existing)}); not Maestro-managed",
+            )
         return CheckResult(
             CI_WORKFLOW,
-            CheckLevel.WARN,
-            "optional CI template available but disabled; enable it by setting "
-            "manage_ci: true in maestro.yml and running maestro setup",
+            CheckLevel.PASS,
+            "not Maestro-managed (manage_ci: false); Maestro runs fine without CI. "
+            "Set manage_ci: true to have Maestro manage a skeleton workflow.",
         )
     destination = ci_workflow_destination(repo_path)
     if destination.is_file():

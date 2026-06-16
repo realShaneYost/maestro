@@ -272,12 +272,21 @@ def test_check_dependency_directory_warns_when_empty(tmp_path):
     assert result.level is CheckLevel.WARN
 
 
-def test_check_ci_template_disabled_warns_with_enable_hint(tmp_path):
+def test_check_ci_template_disabled_passes_without_existing_ci(tmp_path):
     result = check_ci_template(tmp_path, manage_ci=False)
     assert result.name == CI_WORKFLOW
-    assert result.level is CheckLevel.WARN
-    assert "manage_ci: true" in result.message
-    assert "maestro setup" in result.message
+    assert result.level is CheckLevel.PASS
+    assert "manage_ci: false" in result.message
+
+
+def test_check_ci_template_disabled_passes_and_notes_existing_ci(tmp_path):
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: CI\n", encoding="utf-8")
+    result = check_ci_template(tmp_path, manage_ci=False)
+    assert result.level is CheckLevel.PASS
+    assert "ci.yml" in result.message
+    assert "not Maestro-managed" in result.message
 
 
 def test_check_ci_template_enabled_and_present_passes(tmp_path):
