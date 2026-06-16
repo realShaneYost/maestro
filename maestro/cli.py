@@ -19,12 +19,18 @@ from rich.logging import RichHandler
 from maestro.add import AddReport, add_issue_to_board
 from maestro.clean import CleanReport, clean
 from maestro.config import Config, ConfigError, RuntimePaths, load_config, runtime_paths
-from maestro.core.scheduler import DispatchVerdict, blocked_by_reason, explain_dispatch
+from maestro.core.scheduler import (
+    DispatchVerdict,
+    blocked_by_reason,
+    explain_dispatch,
+    failure_cap_reason,
+)
 from maestro.doctor import CheckLevel, CheckResult, run_checks
 from maestro.github import GitHubError, StatusFieldTrigger
 from maestro.logs import read_log
 from maestro.loop import Loop
 from maestro.manifest import CI_WORKFLOW_FILENAME
+from maestro.runlog import consecutive_failures, read_runs
 from maestro.setup import SetupReport, run_setup
 from maestro.status import print_board_section, print_board_unreachable, render_recent, watch
 from maestro.theme import ThemeError, load_theme
@@ -120,16 +126,20 @@ def _cmd_status(args: argparse.Namespace) -> int:
     except GitHubError as err:
         print_board_unreachable(console, str(err))
     else:
-        # Flag issues the scheduler holds back for an open native blocker.
-        # Only trigger-column, still-open issues qualify — the same precedence
-        # the scheduler uses — so this view agrees with `once --dry-run`.
-        held = {
-            issue.number: reason
-            for issue in board.issues
-            if issue.in_trigger_column
-            and issue.number in board.open_numbers
-            and (reason := blocked_by_reason(issue, board.open_numbers)) is not None
-        }
+        # Flag issues the scheduler holds back — for an open native blocker, or
+        # for hitting the consecutive-failure cap. Only trigger-column, still-open
+        # issues qualify, and a blocker outranks the cap, mirroring the
+        # scheduler's own precedence so this view agrees with `once --dry-run`.
+        failure_counts = consecutive_failures(read_runs(paths.runs_log))
+        held: dict[int, str] = {}
+        for issue in board.issues:
+            if not issue.in_trigger_column or issue.number not in board.open_numbers:
+                continue
+            reason = blocked_by_reason(issue, board.open_numbers) or failure_cap_reason(
+                issue, failure_counts, config.max_consecutive_failures
+            )
+            if reason is not None:
+                held[issue.number] = reason
         print_board_section(
             console,
             board,
@@ -202,7 +212,15 @@ def _cmd_once(args: argparse.Namespace) -> int:
     trigger = _trigger(config)
     if args.dry_run:
         board = trigger.poll()
-        verdicts = explain_dispatch(board.issues, board.open_numbers, set(), config.max_concurrent)
+        failure_counts = consecutive_failures(read_runs(paths.runs_log))
+        verdicts = explain_dispatch(
+            board.issues,
+            board.open_numbers,
+            set(),
+            config.max_concurrent,
+            failure_counts,
+            config.max_consecutive_failures,
+        )
         _print_dry_run(console, verdicts)
         return 0
     _setup_logging(console)

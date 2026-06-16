@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from maestro.core.models import RunRecord
-from maestro.runlog import append_run, read_runs
+from maestro.runlog import append_run, consecutive_failures, read_runs
 
 
 def _record(issue: int, outcome: str = "done") -> RunRecord:
@@ -43,3 +43,45 @@ def test_append_creates_parent_directory(tmp_path):
     log = tmp_path / "nested" / "dir" / "runs.jsonl"
     append_run(log, _record(9))
     assert read_runs(log)[0].issue == 9
+
+
+def test_consecutive_failures_empty_for_no_records():
+    assert consecutive_failures([]) == {}
+
+
+def test_consecutive_failures_counts_trailing_failures():
+    records = [_record(1, "failed"), _record(1, "failed"), _record(1, "failed")]
+    assert consecutive_failures(records) == {1: 3}
+
+
+def test_consecutive_failures_resets_on_done():
+    # Two failures, then a clean done run, then one more failure: streak is 1.
+    records = [
+        _record(1, "failed"),
+        _record(1, "failed"),
+        _record(1, "done"),
+        _record(1, "failed"),
+    ]
+    assert consecutive_failures(records) == {1: 1}
+
+
+def test_consecutive_failures_resets_on_blocked():
+    # A blocked run is a clean park, not a crash — it resets the streak.
+    records = [_record(2, "failed"), _record(2, "blocked")]
+    assert consecutive_failures(records) == {}
+
+
+def test_consecutive_failures_omits_issues_with_zero_streak():
+    # Issue 1 ends clean (omitted); issue 2 ends failed (kept).
+    records = [_record(1, "failed"), _record(1, "done"), _record(2, "failed")]
+    assert consecutive_failures(records) == {2: 1}
+
+
+def test_consecutive_failures_tracks_issues_independently():
+    records = [
+        _record(1, "failed"),
+        _record(2, "failed"),
+        _record(1, "failed"),
+        _record(2, "done"),
+    ]
+    assert consecutive_failures(records) == {1: 2}

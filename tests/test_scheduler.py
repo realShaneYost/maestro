@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from maestro.core.models import Issue
-from maestro.core.scheduler import blocked_by_reason, dispatchable_issues, explain_dispatch
+from maestro.core.scheduler import (
+    blocked_by_reason,
+    dispatchable_issues,
+    explain_dispatch,
+    failure_cap_reason,
+)
 
 
 def make_issue(
@@ -211,3 +216,68 @@ def test_explain_returns_one_verdict_per_input_issue_in_order():
     issues = [make_issue(7), make_issue(3), make_issue(5)]
     verdicts = explain_dispatch(issues, {3, 5, 7}, set(), max_concurrent=10)
     assert [v.issue.number for v in verdicts] == [7, 3, 5]
+
+
+def test_failure_cap_reason_holds_at_the_cap():
+    issue = make_issue(1)
+    reason = failure_cap_reason(issue, {1: 3}, 3)
+    assert reason is not None
+    assert "hit failure cap" in reason
+    assert "3 consecutive failed runs" in reason
+    assert "max_consecutive_failures=3" in reason
+
+
+def test_failure_cap_reason_none_below_the_cap():
+    assert failure_cap_reason(make_issue(1), {1: 2}, 3) is None
+
+
+def test_failure_cap_reason_none_for_unseen_issue():
+    assert failure_cap_reason(make_issue(1), {}, 3) is None
+
+
+def test_failure_cap_reason_none_when_cap_disabled():
+    # A None cap disables the gate even with a large streak.
+    assert failure_cap_reason(make_issue(1), {1: 99}, None) is None
+
+
+def test_dispatch_skips_issue_at_failure_cap():
+    issues = [make_issue(1)]
+    result = dispatchable_issues(
+        issues, {1}, set(), max_concurrent=2, failure_counts={1: 3}, max_consecutive_failures=3
+    )
+    assert result == []
+
+
+def test_dispatch_allows_issue_below_failure_cap():
+    issues = [make_issue(1)]
+    result = dispatchable_issues(
+        issues, {1}, set(), max_concurrent=2, failure_counts={1: 2}, max_consecutive_failures=3
+    )
+    assert [i.number for i in result] == [1]
+
+
+def test_dispatch_no_cap_applied_without_arguments():
+    # Backward-compatible default: omitting the cap dispatches regardless.
+    issues = [make_issue(1)]
+    result = dispatchable_issues(issues, {1}, set(), max_concurrent=2)
+    assert [i.number for i in result] == [1]
+
+
+def test_explain_skips_capped_issue_with_matching_reason():
+    issue = make_issue(1)
+    verdict = explain_dispatch(
+        [issue], {1}, set(), 2, failure_counts={1: 4}, max_consecutive_failures=3
+    )[0]
+    assert verdict.dispatch is False
+    assert verdict.reason == failure_cap_reason(issue, {1: 4}, 3)
+
+
+def test_blocked_by_outranks_failure_cap():
+    # An issue both blocked by an open issue and over the cap reports the
+    # blocker first, mirroring the scheduler's gate precedence.
+    issue = make_issue(2, blocked_by={1})
+    verdict = explain_dispatch(
+        [issue], {1, 2}, set(), 2, failure_counts={2: 5}, max_consecutive_failures=3
+    )[0]
+    assert verdict.dispatch is False
+    assert "blocked by open issue(s): #1" in verdict.reason

@@ -65,7 +65,51 @@ def blocked_by_reason(issue: Issue, open_numbers: set[int]) -> str | None:
     return f"skipped — blocked by open issue(s): {listing}"
 
 
-def _ready_reason(issue: Issue, open_numbers: set[int], in_flight: set[int]) -> str | None:
+def failure_cap_reason(
+    issue: Issue,
+    failure_counts: dict[int, int],
+    max_consecutive_failures: int | None,
+) -> str | None:
+    """Return why ``issue`` is held by the consecutive-failure cap, or ``None``.
+
+    An issue that has failed ``max_consecutive_failures`` times in a row without
+    a clean run in between is held back, so a stuck issue cannot be redispatched
+    forever — each retry is a full worker session. The streak counts are derived
+    from the run log outside ``core/`` (see
+    :func:`maestro.runlog.consecutive_failures`) and passed in, which keeps the
+    scheduler pure. This is the single source of truth for the capped message,
+    shared by the scheduler's dispatch gate and the ``maestro status`` board
+    view so the two never disagree.
+
+    Args:
+        issue: The issue being judged.
+        failure_counts: Map from issue number to its current consecutive-failure
+            streak; an issue absent from the map has a streak of zero.
+        max_consecutive_failures: The configured cap, or ``None`` to disable the
+            cap entirely (every issue then passes this gate).
+
+    Returns:
+        The held reason naming the streak and the cap, or ``None`` when the cap
+        is disabled or the issue's streak has not reached it.
+    """
+    if max_consecutive_failures is None:
+        return None
+    streak = failure_counts.get(issue.number, 0)
+    if streak < max_consecutive_failures:
+        return None
+    return (
+        f"skipped — hit failure cap ({streak} consecutive failed runs; "
+        f"max_consecutive_failures={max_consecutive_failures})"
+    )
+
+
+def _ready_reason(
+    issue: Issue,
+    open_numbers: set[int],
+    in_flight: set[int],
+    failure_counts: dict[int, int],
+    max_consecutive_failures: int | None,
+) -> str | None:
     """Return the first per-issue reason ``issue`` is not ready, or ``None`` if ready.
 
     ``None`` means the issue passes every per-issue gate; the caller still has
@@ -78,7 +122,10 @@ def _ready_reason(issue: Issue, open_numbers: set[int], in_flight: set[int]) -> 
         return "skipped — issue is closed"
     if issue.number in in_flight:
         return "skipped — already in flight"
-    return blocked_by_reason(issue, open_numbers)
+    blocked = blocked_by_reason(issue, open_numbers)
+    if blocked is not None:
+        return blocked
+    return failure_cap_reason(issue, failure_counts, max_consecutive_failures)
 
 
 def explain_dispatch(
@@ -86,6 +133,8 @@ def explain_dispatch(
     open_numbers: set[int],
     in_flight: set[int],
     max_concurrent: int,
+    failure_counts: dict[int, int] | None = None,
+    max_consecutive_failures: int | None = None,
 ) -> list[DispatchVerdict]:
     """Return a per-issue dispatch decision with a human-readable reason.
 
@@ -100,15 +149,21 @@ def explain_dispatch(
         open_numbers: Issue numbers that are still open.
         in_flight: Issue numbers that already have a live worker.
         max_concurrent: Hard ceiling on simultaneously running workers.
+        failure_counts: Map from issue number to its current consecutive-failure
+            streak, derived from the run log (see
+            :func:`maestro.runlog.consecutive_failures`). Defaults to no streaks.
+        max_consecutive_failures: Cap above which an issue's failure streak holds
+            it back; ``None`` disables the cap.
 
     Returns:
         One verdict per input issue, in the input order.
     """
+    counts = failure_counts or {}
     candidates: list[Issue] = []
     candidate_set: set[int] = set()
     fixed: dict[int, str] = {}
     for issue in issues:
-        reason = _ready_reason(issue, open_numbers, in_flight)
+        reason = _ready_reason(issue, open_numbers, in_flight, counts, max_consecutive_failures)
         if reason is None:
             candidates.append(issue)
             candidate_set.add(issue.number)
@@ -148,13 +203,15 @@ def dispatchable_issues(
     open_numbers: set[int],
     in_flight: set[int],
     max_concurrent: int,
+    failure_counts: dict[int, int] | None = None,
+    max_consecutive_failures: int | None = None,
 ) -> list[Issue]:
     """Select the issues to dispatch this cycle, in dispatch order.
 
     An issue is dispatchable when its card is in the trigger column, the issue
-    is still open, it is not already being worked, and every issue it is
-    blocked by has been closed. The result is capped so the number of live
-    workers never exceeds ``max_concurrent``.
+    is still open, it is not already being worked, every issue it is blocked by
+    has been closed, and it has not hit the consecutive-failure cap. The result
+    is capped so the number of live workers never exceeds ``max_concurrent``.
 
     Args:
         issues: Every issue currently visible on the board.
@@ -162,12 +219,24 @@ def dispatchable_issues(
             satisfied only once it leaves this set.
         in_flight: Issue numbers that already have a live worker.
         max_concurrent: Hard ceiling on simultaneously running workers.
+        failure_counts: Map from issue number to its current consecutive-failure
+            streak, derived from the run log (see
+            :func:`maestro.runlog.consecutive_failures`). Defaults to no streaks.
+        max_consecutive_failures: Cap above which an issue's failure streak holds
+            it back; ``None`` disables the cap.
 
     Returns:
         The issues to dispatch now, ordered by priority then issue number.
         Empty when no slots are free or nothing is ready.
     """
-    verdicts = explain_dispatch(issues, open_numbers, in_flight, max_concurrent)
+    verdicts = explain_dispatch(
+        issues,
+        open_numbers,
+        in_flight,
+        max_concurrent,
+        failure_counts,
+        max_consecutive_failures,
+    )
     chosen = [v.issue for v in verdicts if v.dispatch]
     chosen.sort(key=_sort_key)
     return chosen

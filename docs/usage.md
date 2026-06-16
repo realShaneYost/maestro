@@ -62,6 +62,7 @@ There is no `repo_path` — Maestro infers it from the git root. The keys:
 | `blocked_column` | `"Blocked"` | Status value the worker parks the card in when it can't proceed. **Reaching it is how a run is classified `blocked`.** |
 | `max_concurrent` | `2` | Hard ceiling on simultaneously running workers. |
 | `poll_interval` | `60` | Seconds between board polls. |
+| `max_consecutive_failures` | `3` | How many times an issue may fail in a row before Maestro stops dispatching it. Any clean run resets the streak; the count is derived from `runs.jsonl`, so it survives a restart. See *Runaway-retry guard* below. |
 | `worker_prompt` | `"/cc-work {issue}"` | Prompt template handed to each worker. Must contain `{issue}`. |
 | `theme` | `"nord"` | Theme for `maestro status` — `nord`, `dark`, or `light`. |
 | `worktree_setup` | `null` | Shell command run inside each fresh worktree to provision its environment. **Set this for any project whose workers change package code** — see *Worktree environment* below. |
@@ -158,6 +159,19 @@ Maestro keeps no database — there is no global state to corrupt. The worst cas
 **Stale worktrees:** a failed run leaves its worktree on disk by design. The next time you re-trigger that issue, dispatch **automatically discards the stale worktree** first and logs a WARNING — you don't have to `maestro clean` between a failed run and a redispatch.
 
 **Starting over:** you never *have* to — re-dropping a card into the trigger column is enough, because the worker detects where it left off. A full reset (move cards back to Backlog) is always available but rarely needed.
+
+## Runaway-retry guard
+
+A worker that *crashes* — exits without parking its card in the review or blocked column — leaves its card in the trigger column, so the scheduler would re-pick it on the next poll. Left unattended, a single stuck issue could redispatch indefinitely, each retry a full worker session burning tokens and compute. `max_consecutive_failures` (default `3`) caps that: once an issue records that many `failed` runs in a row, the scheduler stops dispatching it.
+
+The streak is derived from `runs.jsonl`, not from in-memory session state, so it **survives a `maestro run` restart** — restarting the loop does not reset a stuck issue's count. Any clean run resets the streak to zero: a `done` (card parked in the review column) or a `blocked` (card parked in the blocked column) both count as clean, because both mean the worker behaved correctly. Only true crashes accrue.
+
+A capped issue is surfaced, not silently dropped:
+
+- `maestro run` logs a WARNING the first time it holds the issue back (`Holding issue #N — skipped — hit failure cap (3 consecutive failed runs; max_consecutive_failures=3)`).
+- `maestro status` flags it inline in the board view, and `maestro once --dry-run` lists it among the skipped issues with the same reason.
+
+Maestro does **not** move the card — the `run` loop never writes to GitHub. To clear the cap, investigate the failures (`maestro logs <issue>`), fix the underlying cause, then move the card out of and back into the trigger column; the next clean run resets the streak. Set `max_consecutive_failures` higher to tolerate more retries, or to `1` to stop after the first crash.
 
 ## Inspecting a run's full log
 

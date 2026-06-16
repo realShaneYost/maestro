@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from maestro.config import Config
-from maestro.core.models import BoardState, Issue
+from maestro.core.models import BoardState, Issue, RunRecord
 from maestro.github import GitHubError
 from maestro.loop import Loop, classify_outcome
-from maestro.runlog import read_runs
+from maestro.runlog import append_run, read_runs
 from maestro.worktree import WorktreeError, WorktreeManager
 
 
@@ -274,6 +276,48 @@ def test_recently_dispatched_guards_failed_runs_too(tmp_path):
     assert loop._recently_dispatched == {1}
     loop.tick()  # guard holds across subsequent ticks while the card stays
     assert loop._workers == {}
+
+
+def _seed_failures(runs_log, issue: int, count: int) -> None:
+    """Append ``count`` failed run records for ``issue`` to the run log."""
+    for _ in range(count):
+        append_run(
+            runs_log,
+            RunRecord(
+                issue=issue,
+                started="2026-06-15T00:00:00Z",
+                ended="2026-06-15T00:05:00Z",
+                outcome="failed",
+                pr_url=None,
+            ),
+        )
+
+
+def test_tick_does_not_dispatch_issue_at_failure_cap(tmp_path):
+    # Three prior failures (the default cap) recorded before a fresh loop
+    # starts — the durable, cross-restart guard, since _recently_dispatched
+    # begins empty. The capped issue must not be redispatched.
+    _seed_failures(tmp_path / "runs.jsonl", 1, 3)
+    loop = _make_loop(tmp_path, FakeTrigger(_board(1)))
+    loop.tick()
+    assert loop._workers == {}
+
+
+def test_tick_dispatches_issue_below_failure_cap(tmp_path):
+    _seed_failures(tmp_path / "runs.jsonl", 1, 2)  # below the default cap of 3
+    loop = _make_loop(tmp_path, FakeTrigger(_board(1)))
+    loop.tick()
+    assert set(loop._workers) == {1}
+
+
+def test_tick_logs_capped_issue_once_per_session(tmp_path, caplog):
+    _seed_failures(tmp_path / "runs.jsonl", 1, 3)
+    loop = _make_loop(tmp_path, FakeTrigger(_board(1)))
+    with caplog.at_level(logging.WARNING, logger="maestro.loop"):
+        loop.tick()
+        loop.tick()
+    holds = [r for r in caplog.records if "hit failure cap" in r.getMessage()]
+    assert len(holds) == 1
 
 
 def test_tick_skips_issue_when_worktree_setup_fails(tmp_path):

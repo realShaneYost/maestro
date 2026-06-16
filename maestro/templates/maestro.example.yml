@@ -31,6 +31,16 @@ max_concurrent: 2
 # Seconds between board polls.
 poll_interval: 60
 
+# How many times an issue may fail in a row before Maestro stops dispatching it.
+# A "failure" is a run that ends without the worker parking its card in the
+# review or blocked column (a crash or contract violation); any clean run resets
+# the streak. The streak is derived from runs.jsonl, so it survives a restart.
+# This guards against a stuck issue redispatching forever -- each retry is a full
+# worker session. A capped issue is flagged in `maestro status` and logged; clear
+# it by fixing the issue and moving its card out of and back into the trigger
+# column. Must be a positive integer.
+max_consecutive_failures: 3
+
 # Prompt handed to each worker. Must contain the {issue} placeholder.
 worker_prompt: "/cc-work {issue}"
 

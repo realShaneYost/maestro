@@ -28,7 +28,7 @@ maestro  ──poll──▶  GitHub Projects board
 ```
 
 1. **Poll** the board via `gh api graphql`, once per interval. Only Maestro polls; workers never do.
-2. **Schedule** (pure code, `core/scheduler.py`): an issue is dispatchable when its card is in the trigger column, the issue is open, it has no live worker, and every issue it is "Blocked by" is closed. When more issues are ready than `max_concurrent`, the board's Priority field breaks the tie.
+2. **Schedule** (pure code, `core/scheduler.py`): an issue is dispatchable when its card is in the trigger column, the issue is open, it has no live worker, every issue it is "Blocked by" is closed, and it has not hit the consecutive-failure cap (`max_consecutive_failures`, derived from `runs.jsonl` and passed in — the scheduler stays pure). When more issues are ready than `max_concurrent`, the board's Priority field breaks the tie.
 3. **Dispatch** up to `max_concurrent`: add a fresh worktree off `origin/main`, provision it (run `worktree_setup`, or fall back to symlinking the repo's `.venv`), spawn the worker prompt as a headless `claude` process, and capture its output to `logs/issue-N.log`.
 4. **Track** in-flight workers — the set is reconstructable from `git worktree list`.
 5. **Reap** on worker exit: append one line to `runs.jsonl`, then remove the worktree if the worker succeeded (keep it if it crashed, for debugging).
