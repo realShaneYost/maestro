@@ -48,7 +48,7 @@ Maestro expects:
 Copy the template into the driven repo and fill it in. It holds only board facts (no machine-specific paths) and is meant to be **committed**:
 
 ```
-cp /path/to/maestro/maestro.example.yml maestro.yml
+cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml
 ```
 
 There is no `repo_path` — Maestro infers it from the git root. The keys:
@@ -85,7 +85,7 @@ If `setup` listed missing Status options, add them on the board: **⋯ → Setti
 
 ## 6. Install the worker skill in the driven repo
 
-The repo must supply the skill named in `worker_prompt`. For Claude Code, that's `.claude/skills/<name>/SKILL.md`, where `<name>` is the first token after the `/` (default `cc-work`). [`templates/worker-skill.md`](../templates/worker-skill.md) is the contract — copy it across and adapt the quality-gate commands and column names. The skill's column names **must match** `maestro.yml` and the live board exactly.
+The repo must supply the skill named in `worker_prompt`. For Claude Code, that's `.claude/skills/<name>/SKILL.md`, where `<name>` is the first token after the `/` (default `cc-work`). [`maestro/templates/worker-skill.md`](../maestro/templates/worker-skill.md) is the contract — copy it across and adapt the quality-gate commands and column names. The skill's column names **must match** `maestro.yml` and the live board exactly.
 
 ## 7. Verify, then dry-run
 

@@ -7,7 +7,7 @@ import pytest
 from maestro.manifest import (
     CI_WORKFLOW_FILENAME,
     MANIFEST,
-    PACKAGE_ROOT,
+    PACKAGE_FILES,
     WORKER_SKILL,
     Dependency,
     ci_template_path,
@@ -60,8 +60,8 @@ def test_template_path_none_when_no_template():
 
 
 def test_shipped_templates_resolve_and_exist():
-    # Every templated entry must point at a real file in the source tree, so the
-    # future ``maestro update`` can read it. PACKAGE_ROOT is the repo root here.
+    # Every templated entry must point at a real bundled file, so ``maestro
+    # update`` can read it via importlib.resources after a plain wheel install.
     for dep in MANIFEST:
         if dep.template is None:
             continue
@@ -89,9 +89,12 @@ def test_read_template_raises_without_template():
         read_template(dep)
 
 
-def test_package_root_holds_the_templates():
-    assert (PACKAGE_ROOT / "templates" / "worker-skill.md").is_file()
-    assert (PACKAGE_ROOT / "maestro.example.yml").is_file()
+def test_package_files_bundle_the_templates():
+    # The reference templates ship inside the installed package under
+    # ``maestro/templates/`` and resolve via importlib.resources.
+    assert (PACKAGE_FILES / "templates" / "worker-skill.md").is_file()
+    assert (PACKAGE_FILES / "templates" / "maestro.example.yml").is_file()
+    assert (PACKAGE_FILES / "templates" / "ci-workflow.yml").is_file()
 
 
 def test_ci_template_ships_and_is_manual_only():

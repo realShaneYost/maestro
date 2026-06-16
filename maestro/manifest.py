@@ -15,23 +15,51 @@ This module is the single *logical* place that enumerates them. Each entry names
 the dependency, the path it belongs at inside a driven repo, and the source
 template that ships inside the installed Maestro package. ``maestro doctor``
 reports presence against this list (see :mod:`maestro.doctor`), the README
-documents the same three locations, and the future ``maestro update`` reconciles
-a repo's copies against the packaged templates by walking the same manifest.
+documents the same three locations, and ``maestro update`` reconciles a repo's
+copies against the packaged templates by walking the same manifest.
 
-Template paths are resolved relative to :data:`PACKAGE_ROOT`, which is the
-project root in a source checkout or editable install. Bundling the templates
-into a wheel so they resolve after a plain ``uv tool install`` is the concern of
-the ``maestro update`` feature that builds on this manifest.
+The reference templates are bundled *inside* the ``maestro`` package, under
+``maestro/templates/`` (see ``pyproject.toml``'s ``package-data``), and are
+resolved at runtime via :func:`importlib.resources.files` rather than a
+filesystem path relative to the cwd or the source checkout. That makes them
+resolvable after a plain ``uv tool install`` — the bug this design fixes — and
+keeps them a read-only reference: they are never written into a driven repo and
+never overwrite a user's editable copies.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from importlib import resources
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
-# Project root that carries the source templates: the package's parent, which is
-# the repo root in a source checkout or editable install.
-PACKAGE_ROOT = Path(__file__).resolve().parent.parent
+# Root the bundled templates resolve against: the installed ``maestro`` package
+# itself. ``resources.files`` returns a Traversable that works for a wheel
+# install, an editable install, or a source checkout alike. Tests inject a
+# ``Path`` in its place — ``Path`` satisfies the Traversable interface.
+PACKAGE_FILES: Traversable = resources.files("maestro")
+
+
+def _resolve(package_root: Traversable, relpath: str) -> Traversable:
+    """Resolve a POSIX-relative template path against a package root.
+
+    Joins one path segment at a time so the result works for any Traversable,
+    not only those whose ``__truediv__`` splits embedded separators.
+
+    Args:
+        package_root: Root the template path is resolved against.
+        relpath: POSIX-relative path to a bundled template (e.g.
+            ``"templates/worker-skill.md"``).
+
+    Returns:
+        The resolved Traversable; not guaranteed to exist on disk.
+    """
+    target = package_root
+    for part in relpath.split("/"):
+        target = target / part
+    return target
+
 
 # Stable name of the worker-skill dependency. ``maestro doctor`` special-cases it
 # so the presence check follows the configured ``worker_prompt`` (which may name
@@ -54,6 +82,12 @@ CI_WORKFLOW = "CI workflow"
 # is namespaced so writing it never clobbers a workflow the user already keeps.
 CI_WORKFLOW_TEMPLATE = "templates/ci-workflow.yml"
 CI_WORKFLOW_FILENAME = "maestro-ci.yml"
+
+# Package-relative POSIX path to the bundled example config template.
+CONFIG_TEMPLATE = "templates/maestro.example.yml"
+
+# Package-relative POSIX path to the bundled worker-skill template.
+WORKER_SKILL_TEMPLATE = "templates/worker-skill.md"
 
 
 @dataclass(frozen=True)
@@ -107,21 +141,20 @@ class Dependency:
             return target.is_dir() and any(target.iterdir())
         return target.is_file()
 
-    def template_path(self, package_root: Path = PACKAGE_ROOT) -> Path | None:
-        """Return the absolute path to this dependency's source template.
+    def template_path(self, package_root: Traversable = PACKAGE_FILES) -> Traversable | None:
+        """Return the bundled-template resource for this dependency.
 
         Args:
             package_root: Root the template path is resolved against; defaults to
-                :data:`PACKAGE_ROOT`. Injectable for tests.
+                :data:`PACKAGE_FILES`. Injectable for tests.
 
         Returns:
-            The resolved template path, or ``None`` when no template ships for
-            this dependency. The path is not guaranteed to exist on disk — a
-            plain wheel install does not yet bundle the templates.
+            The resolved template resource, or ``None`` when no template ships
+            for this dependency.
         """
         if self.template is None:
             return None
-        return package_root / self.template
+        return _resolve(package_root, self.template)
 
 
 MANIFEST: tuple[Dependency, ...] = (
@@ -134,7 +167,7 @@ MANIFEST: tuple[Dependency, ...] = (
         location=".claude/skills/cc-work/SKILL.md",
         is_directory=False,
         required=True,
-        template="templates/worker-skill.md",
+        template=WORKER_SKILL_TEMPLATE,
     ),
     Dependency(
         name="config",
@@ -145,7 +178,7 @@ MANIFEST: tuple[Dependency, ...] = (
         location="maestro.yml",
         is_directory=False,
         required=True,
-        template="maestro.example.yml",
+        template=CONFIG_TEMPLATE,
     ),
     Dependency(
         name=CI_WORKFLOW,
@@ -161,18 +194,17 @@ MANIFEST: tuple[Dependency, ...] = (
 )
 
 
-def ci_template_path(package_root: Path = PACKAGE_ROOT) -> Path:
-    """Return the absolute path to the packaged CI skeleton template.
+def ci_template_path(package_root: Traversable = PACKAGE_FILES) -> Traversable:
+    """Return the bundled CI skeleton template resource.
 
     Args:
         package_root: Root the template path is resolved against; defaults to
-            :data:`PACKAGE_ROOT`. Injectable for tests.
+            :data:`PACKAGE_FILES`. Injectable for tests.
 
     Returns:
-        The resolved template path. It is not guaranteed to exist on disk — a
-        plain wheel install does not yet bundle the templates.
+        The resolved template resource.
     """
-    return package_root / CI_WORKFLOW_TEMPLATE
+    return _resolve(package_root, CI_WORKFLOW_TEMPLATE)
 
 
 def ci_workflow_destination(repo_path: Path) -> Path:
@@ -188,12 +220,12 @@ def ci_workflow_destination(repo_path: Path) -> Path:
     return repo_path / ".github" / "workflows" / CI_WORKFLOW_FILENAME
 
 
-def read_ci_template(package_root: Path = PACKAGE_ROOT) -> str:
+def read_ci_template(package_root: Traversable = PACKAGE_FILES) -> str:
     """Read the packaged CI skeleton template's text.
 
     Args:
         package_root: Root the template path is resolved against; defaults to
-            :data:`PACKAGE_ROOT`. Injectable for tests.
+            :data:`PACKAGE_FILES`. Injectable for tests.
 
     Returns:
         The template's text content.
@@ -204,16 +236,16 @@ def read_ci_template(package_root: Path = PACKAGE_ROOT) -> str:
     return ci_template_path(package_root).read_text(encoding="utf-8")
 
 
-def read_template(dependency: Dependency, package_root: Path = PACKAGE_ROOT) -> str:
+def read_template(dependency: Dependency, package_root: Traversable = PACKAGE_FILES) -> str:
     """Read a dependency's source template from the installed package.
 
-    This is the reconciliation primitive the future ``maestro update`` builds on:
-    given a manifest entry, return the canonical content Maestro ships for it.
+    This is the reconciliation primitive ``maestro update`` builds on: given a
+    manifest entry, return the canonical content Maestro ships for it.
 
     Args:
         dependency: The manifest entry whose template to read.
         package_root: Root the template path is resolved against; defaults to
-            :data:`PACKAGE_ROOT`. Injectable for tests.
+            :data:`PACKAGE_FILES`. Injectable for tests.
 
     Returns:
         The template's text content.

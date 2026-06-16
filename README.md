@@ -69,7 +69,7 @@ Each driven repo carries its own config at its root. Copy the template in:
 
 ```
 cd /path/to/your-project
-cp /path/to/maestro/maestro.example.yml maestro.yml
+cp /path/to/maestro/maestro/templates/maestro.example.yml maestro.yml
 ```
 
 Edit `maestro.yml` — at minimum `repo_slug`, `project_number`, and `trigger_column`. There is no `repo_path`: Maestro infers it from the git root when run from inside the repo, so the file holds only board facts and is meant to be committed. See [`docs/usage.md`](docs/usage.md) for the board settings Maestro expects and the full setup checklist.
@@ -80,8 +80,8 @@ Maestro keeps its editable dependencies in three fixed locations inside each dri
 
 | Dependency | Location | Required | Source template |
 |---|---|---|---|
-| Worker skill | `.claude/skills/cc-work/SKILL.md` | yes | `templates/worker-skill.md` |
-| Config | `maestro.yml` (repo root) | yes | `maestro.example.yml` |
+| Worker skill | `.claude/skills/cc-work/SKILL.md` | yes | `maestro/templates/worker-skill.md` |
+| Config | `maestro.yml` (repo root) | yes | `maestro/templates/maestro.example.yml` |
 | CI workflow | `.github/workflows/` | optional | — |
 
 When Maestro changes, these are the only files you reconcile. Run `maestro doctor` to see them listed with their presence at a glance, or `maestro update` to upgrade the tool and get a drift report against the shipped templates — including any new `maestro.yml` keys. `maestro update` never overwrites your edits; it reports drift and leaves the reconciliation to you.

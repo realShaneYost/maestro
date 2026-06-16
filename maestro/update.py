@@ -21,11 +21,11 @@ Following the repo's core/CLI split, this module returns data
 goes through an injectable runner so the suite needs no uv install or network.
 
 Reconciliation reads each template from the installed package via
-:func:`maestro.manifest.read_template`, which resolves under
-:data:`maestro.manifest.PACKAGE_ROOT`. That works from a source or editable
-install (Maestro's dogfooding mode); a pure wheel install does not yet bundle
-the templates, so a template that cannot be read is reported as such — a safe,
-non-overwriting outcome — rather than crashing.
+:func:`maestro.manifest.read_template`, which resolves the bundled templates
+under :data:`maestro.manifest.PACKAGE_FILES` via ``importlib.resources``. That
+works for a wheel install, an editable install, or a source checkout alike. A
+template that still cannot be read is reported as such — a safe, non-overwriting
+outcome — rather than crashing.
 """
 
 from __future__ import annotations
@@ -35,13 +35,14 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 import yaml
 
 from maestro.config import Config
 from maestro.install import InstallInfo, InstallSource, detect_install
-from maestro.manifest import MANIFEST, PACKAGE_ROOT, Dependency, read_template
+from maestro.manifest import MANIFEST, PACKAGE_FILES, Dependency, read_template
 
 # (args) -> (returncode, stdout, stderr). Mirrors the doctor's gh runner shape so
 # the suite can drive `maestro update` with canned uv output.
@@ -328,7 +329,7 @@ def _new_config_keys(user_text: str, template_text: str) -> tuple[ConfigKey, ...
 
 
 def _reconcile_dependency(
-    dependency: Dependency, repo_path: Path, package_root: Path
+    dependency: Dependency, repo_path: Path, package_root: Traversable
 ) -> DependencyReconciliation:
     """Compare one dependency's repo copy against its shipped template.
 
@@ -397,14 +398,14 @@ def _reconcile_dependency(
 
 
 def reconcile(
-    repo_path: Path, package_root: Path = PACKAGE_ROOT
+    repo_path: Path, package_root: Traversable = PACKAGE_FILES
 ) -> tuple[DependencyReconciliation, ...]:
     """Reconcile every manifest dependency against its shipped template.
 
     Args:
         repo_path: Root of the driven repository.
         package_root: Root the template paths are resolved against; defaults to
-            :data:`maestro.manifest.PACKAGE_ROOT`. Injectable for tests.
+            :data:`maestro.manifest.PACKAGE_FILES`. Injectable for tests.
 
     Returns:
         One :class:`DependencyReconciliation` per manifest entry, in order.
@@ -417,7 +418,7 @@ def run_update(
     *,
     uv_runner: UvRunner = _run_uv,
     install_info: InstallInfo | None = None,
-    package_root: Path = PACKAGE_ROOT,
+    package_root: Traversable = PACKAGE_FILES,
 ) -> UpdateReport:
     """Upgrade the installed tool, then reconcile the repo's editable deps.
 

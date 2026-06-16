@@ -16,6 +16,7 @@ import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
+from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from maestro.config import Config
@@ -24,7 +25,7 @@ from maestro.install import detect_install
 from maestro.manifest import (
     CI_WORKFLOW,
     MANIFEST,
-    PACKAGE_ROOT,
+    PACKAGE_FILES,
     WORKER_SKILL,
     Dependency,
     ci_template_path,
@@ -276,7 +277,7 @@ def check_dependency(dependency: Dependency, repo_path: Path) -> CheckResult:
 
 
 def check_ci_template(
-    repo_path: Path, manage_ci: bool, package_root: Path = PACKAGE_ROOT
+    repo_path: Path, manage_ci: bool, package_root: Traversable = PACKAGE_FILES
 ) -> CheckResult:
     """Report the optional CI skeleton's managed state, with an enable hint.
 

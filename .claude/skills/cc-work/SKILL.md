@@ -7,7 +7,7 @@ description: Autonomously work GitHub issue N end-to-end — branch, implement, 
 
 Autonomously run GitHub issue `N` from start to merge-ready PR. One operator invocation, one PR. Follow these steps exactly.
 
-> **Canonical contract.** This skill implements the worker contract defined in this repo at `templates/worker-skill.md`. That file is the source of truth; any drift here is a bug.
+> **Canonical contract.** This skill implements the worker contract defined in this repo at `maestro/templates/worker-skill.md`. That file is the source of truth; any drift here is a bug.
 
 ## 0. Read these standing rules first
 
