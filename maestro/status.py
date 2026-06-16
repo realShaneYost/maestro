@@ -334,22 +334,32 @@ def _drain(
     repo_slug: str,
     titles: dict[int, str],
 ) -> None:
-    """Render log lines appended to ``log_path`` since the last poll.
+    """Render complete log lines appended to ``log_path`` since the last poll.
 
-    The first time a log is seen its current end is recorded and nothing is
-    printed — ``watch`` streams only activity from when it started.
+    The first time a log is seen its current end is recorded — snapped back to
+    the last newline so streaming starts on a clean line boundary — and nothing
+    is printed: ``watch`` streams only activity from when it started.
+
+    On later polls only newline-terminated lines are rendered. A trailing
+    partial line — a half-written ``stream-json`` event still being streamed by
+    the worker — is left unconsumed and picked up once the worker finishes
+    writing it, so raw JSON fragments never reach the view.
     """
     data = log_path.read_bytes()
     if log_path not in offsets:
-        offsets[log_path] = len(data)
+        offsets[log_path] = data.rfind(b"\n") + 1
         return
     if len(data) <= offsets[log_path]:
         return
-    fresh = data[offsets[log_path] :].decode("utf-8", errors="replace")
-    offsets[log_path] = len(data)
+    fresh = data[offsets[log_path] :]
+    boundary = fresh.rfind(b"\n")
+    if boundary == -1:
+        return
+    complete = fresh[: boundary + 1]
+    offsets[log_path] += len(complete)
     stamp = datetime.now().strftime("%H:%M:%S")
     title = _fetch_title(repo_slug, issue, titles)
-    for entry in fresh.splitlines():
+    for entry in complete.decode("utf-8", errors="replace").splitlines():
         parsed = _parse_event_line(issue, entry)
         if parsed is not None:
             console.print(_render_line(parsed, stamp, title))
