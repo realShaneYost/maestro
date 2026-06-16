@@ -26,6 +26,8 @@ _DEFAULTS: dict[str, Any] = {
     "blocked_column": "Blocked",
     "manage_ci": False,
     "max_consecutive_failures": 3,
+    "gh_timeout": 15,
+    "priority_options": ("Critical", "High", "Normal", "Low"),
 }
 
 
@@ -66,6 +68,16 @@ class Config:
             from the run log and reset by any clean run (``done`` or
             ``blocked``); reaching the cap holds the issue back so a stuck issue
             cannot be redispatched forever, each retry a full worker session.
+        gh_timeout: Seconds a synchronous ``gh`` call may run before it is
+            abandoned. Used by the read-only board/title lookups behind
+            ``status``; a slow network or a sluggish GitHub API is the reason to
+            raise it. Must be a positive integer.
+        priority_options: Ordered Priority-field options ``maestro setup`` seeds
+            when the board has no Priority field yet, highest rank first. Only
+            consulted at setup time — the scheduler ranks live issues by the
+            board's own option order, never this list — so changing it after the
+            field exists has no effect. Override it to match a team's own
+            priority scale (e.g. ``P0``/``P1``/``P2``).
     """
 
     repo_path: Path
@@ -81,6 +93,8 @@ class Config:
     blocked_column: str
     manage_ci: bool = False
     max_consecutive_failures: int = 3
+    gh_timeout: int = 15
+    priority_options: tuple[str, ...] = ("Critical", "High", "Normal", "Low")
 
 
 def load_config(path: Path, *, repo_path: Path) -> Config:
@@ -172,6 +186,8 @@ def _build_config(values: dict[str, Any]) -> Config:
         blocked_column=blocked_column,
         manage_ci=_bool(values, "manage_ci"),
         max_consecutive_failures=_positive_int(values, "max_consecutive_failures"),
+        gh_timeout=_positive_int(values, "gh_timeout"),
+        priority_options=_priority_options(values),
     )
 
 
@@ -196,6 +212,27 @@ def _bool(values: dict[str, Any], key: str) -> bool:
     if not isinstance(raw, bool):
         raise ConfigError(f"{key} must be a boolean: {raw!r}")
     return raw
+
+
+def _priority_options(values: dict[str, Any]) -> tuple[str, ...]:
+    """Return ``values['priority_options']`` as a validated tuple of names.
+
+    The value must be a non-empty list of distinct, non-empty strings; the
+    order is preserved because it encodes priority rank (highest first).
+    """
+    raw = values["priority_options"]
+    if isinstance(raw, tuple):
+        raw = list(raw)
+    if not isinstance(raw, list) or not raw:
+        raise ConfigError(f"priority_options must be a non-empty list: {raw!r}")
+    options: list[str] = []
+    for item in raw:
+        if isinstance(item, bool) or not isinstance(item, str) or not item.strip():
+            raise ConfigError(f"priority_options entries must be non-empty strings: {item!r}")
+        options.append(item)
+    if len(set(options)) != len(options):
+        raise ConfigError("priority_options entries must be distinct")
+    return tuple(options)
 
 
 @dataclass(frozen=True)

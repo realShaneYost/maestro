@@ -10,7 +10,12 @@ from maestro.manifest import CI_WORKFLOW_FILENAME, ci_workflow_destination
 from maestro.setup import run_setup
 
 
-def _config(tmp_path: Path, *, manage_ci: bool = False) -> Config:
+def _config(
+    tmp_path: Path,
+    *,
+    manage_ci: bool = False,
+    priority_options: tuple[str, ...] = ("Critical", "High", "Normal", "Low"),
+) -> Config:
     return Config(
         repo_path=tmp_path,
         repo_slug="owner/repo",
@@ -24,6 +29,7 @@ def _config(tmp_path: Path, *, manage_ci: bool = False) -> Config:
         review_column="In Review",
         blocked_column="Blocked",
         manage_ci=manage_ci,
+        priority_options=priority_options,
     )
 
 
@@ -68,6 +74,16 @@ def test_setup_creates_priority_field_when_absent(tmp_path):
         call[:2] == ["project", "field-create"] and "Critical,High,Normal,Low" in call
         for call in created
     )
+
+
+def test_setup_seeds_configured_priority_options(tmp_path):
+    runner, created = _make_runner(
+        status=["Backlog", "In Progress", "In Review", "Blocked"], priority_options=None
+    )
+    config = _config(tmp_path, priority_options=("P0", "P1", "P2"))
+    report = run_setup(config, gh_runner=runner)
+    assert report.priority_created is True
+    assert any(call[:2] == ["project", "field-create"] and "P0,P1,P2" in call for call in created)
 
 
 def test_setup_skips_priority_when_present(tmp_path):
