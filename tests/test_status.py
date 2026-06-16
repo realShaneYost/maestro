@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import io
 import json
+from pathlib import Path
+
+from rich.console import Console
 
 from maestro.core.models import BoardState, Issue
 from maestro.status import (
     LogLine,
+    _drain,
     _issue_of,
     _parse_event_line,
     _render_line,
@@ -244,6 +249,74 @@ def test_render_board_summary_annotates_held_issue():
     # The held issue carries its reason inline; the unrelated one does not.
     assert "#38  build the CLI  — skipped — blocked by open issue(s): #37" in text
     assert "#7  unrelated\n" in text + "\n"
+
+
+def _drain_console() -> tuple[Console, io.StringIO]:
+    buffer = io.StringIO()
+    # no_color/width keep the captured text free of ANSI styling and wrapping.
+    console = Console(file=buffer, force_terminal=False, no_color=True, width=200)
+    return console, buffer
+
+
+def _append(log_path: Path, chunk: str) -> None:
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(chunk)
+
+
+def test_drain_buffers_partial_json_until_complete(tmp_path):
+    log = tmp_path / "issue-7.log"
+    log.write_text("", encoding="utf-8")
+    console, buffer = _drain_console()
+    offsets: dict[Path, int] = {}
+    titles: dict[int, str] = {}
+
+    # First poll records the start position and prints nothing.
+    _drain(console, log, 7, offsets, "owner/repo", titles)
+    assert buffer.getvalue() == ""
+
+    event = json.dumps({"type": "system", "subtype": "init"})
+    # The worker streams the event in three pieces, the last with the newline.
+    head, mid, tail = event[:10], event[10:20], event[20:] + "\n"
+
+    _append(log, head)
+    _drain(console, log, 7, offsets, "owner/repo", titles)
+    _append(log, mid)
+    _drain(console, log, 7, offsets, "owner/repo", titles)
+    # Nothing rendered yet — the line has no terminating newline.
+    assert buffer.getvalue() == ""
+
+    _append(log, tail)
+    _drain(console, log, 7, offsets, "owner/repo", titles)
+    out = buffer.getvalue()
+    # The complete event renders as a clean line; no raw fragment leaks.
+    assert "session init" in out
+    assert "essage" not in out
+    assert '"subtype"' not in out
+
+
+def test_drain_renders_complete_lines_and_buffers_trailing_partial(tmp_path):
+    log = tmp_path / "issue-9.log"
+    log.write_text("", encoding="utf-8")
+    console, buffer = _drain_console()
+    offsets: dict[Path, int] = {}
+    titles: dict[int, str] = {}
+    _drain(console, log, 9, offsets, "owner/repo", titles)
+
+    first = json.dumps({"type": "system", "subtype": "init"})
+    second = json.dumps({"type": "result", "subtype": "success"})
+    # A complete line, then the start of the next event with no newline yet.
+    _append(log, first + "\n" + second[:12])
+    _drain(console, log, 9, offsets, "owner/repo", titles)
+    out = buffer.getvalue()
+    assert "session init" in out
+    # The partial second event must not leak.
+    assert "finished" not in out
+    assert "result" not in out
+
+    _append(log, second[12:] + "\n")
+    _drain(console, log, 9, offsets, "owner/repo", titles)
+    out = buffer.getvalue()
+    assert "finished: success" in out
 
 
 def test_render_board_summary_no_held_reasons_leaves_rows_plain():
