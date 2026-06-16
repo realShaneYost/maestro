@@ -77,9 +77,6 @@ def _build_trigger(config: Config, gh: GhRunner) -> StatusFieldTrigger:
     )
 
 
-_PRIORITY_OPTIONS = ("Critical", "High", "Normal", "Low")
-
-
 def _materialize_ci(config: Config, report: SetupReport, package_root: Traversable) -> None:
     """Write the CI skeleton into the repo when ``manage_ci`` is enabled.
 
@@ -161,7 +158,7 @@ def run_setup(
                 "--data-type",
                 "SINGLE_SELECT",
                 "--single-select-options",
-                ",".join(_PRIORITY_OPTIONS),
+                ",".join(config.priority_options),
             ]
         )
         if code != 0:

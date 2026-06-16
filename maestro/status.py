@@ -55,11 +55,17 @@ def _short_title(title: str, width: int = 15) -> str:
     return clean[: width - 1] + "…"
 
 
-def _fetch_title(repo_slug: str, issue: int, cache: dict[int, str]) -> str:
+def _fetch_title(repo_slug: str, issue: int, cache: dict[int, str], *, gh_timeout: int = 15) -> str:
     """Return issue ``issue``'s title, fetched once via ``gh`` and cached.
 
     Best-effort: any failure (no network, gh error, unknown issue) yields an
     empty string, and the rendered line falls back to just the issue number.
+
+    Args:
+        repo_slug: GitHub ``owner/name`` slug to query.
+        issue: Issue number whose title to fetch.
+        cache: Per-render memo of issue number to title; mutated in place.
+        gh_timeout: Seconds the ``gh`` call may run before being abandoned.
     """
     if issue in cache:
         return cache[issue]
@@ -81,7 +87,7 @@ def _fetch_title(repo_slug: str, issue: int, cache: dict[int, str]) -> str:
             capture_output=True,
             text=True,
             check=True,
-            timeout=15,
+            timeout=gh_timeout,
         )
         title = result.stdout.strip()
     except (subprocess.SubprocessError, OSError):
@@ -313,8 +319,17 @@ def print_board_unreachable(console: Console, error: str) -> None:
     console.print()
 
 
-def render_recent(console: Console, logs_dir: Path, repo_slug: str) -> None:
-    """Print a one-shot snapshot of recent worker activity."""
+def render_recent(
+    console: Console, logs_dir: Path, repo_slug: str, *, gh_timeout: int = 15
+) -> None:
+    """Print a one-shot snapshot of recent worker activity.
+
+    Args:
+        console: Console to render to.
+        logs_dir: Directory holding per-issue worker logs.
+        repo_slug: GitHub ``owner/name`` slug used to resolve issue titles.
+        gh_timeout: Seconds each ``gh`` title lookup may run before timing out.
+    """
     lines = recent_lines(logs_dir)
     if not lines:
         console.print("No worker activity.")
@@ -322,7 +337,7 @@ def render_recent(console: Console, logs_dir: Path, repo_slug: str) -> None:
     stamp = datetime.now().strftime("%H:%M:%S")
     titles: dict[int, str] = {}
     for line in lines:
-        title = _fetch_title(repo_slug, line.issue, titles)
+        title = _fetch_title(repo_slug, line.issue, titles, gh_timeout=gh_timeout)
         console.print(_render_line(line, stamp, title))
 
 
@@ -333,6 +348,8 @@ def _drain(
     offsets: dict[Path, int],
     repo_slug: str,
     titles: dict[int, str],
+    *,
+    gh_timeout: int = 15,
 ) -> None:
     """Render complete log lines appended to ``log_path`` since the last poll.
 
@@ -358,15 +375,30 @@ def _drain(
     complete = fresh[: boundary + 1]
     offsets[log_path] += len(complete)
     stamp = datetime.now().strftime("%H:%M:%S")
-    title = _fetch_title(repo_slug, issue, titles)
+    title = _fetch_title(repo_slug, issue, titles, gh_timeout=gh_timeout)
     for entry in complete.decode("utf-8", errors="replace").splitlines():
         parsed = _parse_event_line(issue, entry)
         if parsed is not None:
             console.print(_render_line(parsed, stamp, title))
 
 
-def watch(console: Console, logs_dir: Path, repo_slug: str, interval: float = 1.0) -> None:
-    """Stream new worker-log activity to the console until interrupted."""
+def watch(
+    console: Console,
+    logs_dir: Path,
+    repo_slug: str,
+    interval: float = 1.0,
+    *,
+    gh_timeout: int = 15,
+) -> None:
+    """Stream new worker-log activity to the console until interrupted.
+
+    Args:
+        console: Console to render to.
+        logs_dir: Directory holding per-issue worker logs.
+        repo_slug: GitHub ``owner/name`` slug used to resolve issue titles.
+        interval: Seconds to sleep between polls of the log directory.
+        gh_timeout: Seconds each ``gh`` title lookup may run before timing out.
+    """
     console.print("Maestro — watching workers (Ctrl-C to stop)", style="header")
     offsets: dict[Path, int] = {}
     titles: dict[int, str] = {}
@@ -376,7 +408,9 @@ def watch(console: Console, logs_dir: Path, repo_slug: str, interval: float = 1.
             for log_path in logs:
                 issue = _issue_of(log_path)
                 if issue is not None:
-                    _drain(console, log_path, issue, offsets, repo_slug, titles)
+                    _drain(
+                        console, log_path, issue, offsets, repo_slug, titles, gh_timeout=gh_timeout
+                    )
             time.sleep(interval)
     except KeyboardInterrupt:
         pass

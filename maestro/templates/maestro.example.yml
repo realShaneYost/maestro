@@ -3,8 +3,13 @@
 # repo and infers the repo path from the git root, so this file holds only board
 # facts (no machine-specific paths) and is meant to be committed to the repo.
 # Runtime artifacts live in a sibling <repo>.maestro/ dir, never in the repo.
+#
+# Keys are grouped below from most- to least-likely to need editing. The first
+# section is required; every other key has the default shown and may be omitted.
 
-# --- Required ---
+# =============================================================================
+# Required -- Maestro will not start until these are set
+# =============================================================================
 
 # GitHub "owner/name" slug for the repository this config lives in.
 repo_slug: "your-org/your-project"
@@ -12,10 +17,13 @@ repo_slug: "your-org/your-project"
 # GitHub Projects V2 board number to poll.
 project_number: 1
 
-# Status-field value that means "dispatch this issue".
+# Status-field value that means "dispatch this issue". This is the trigger
+# column: moving an issue's card here is what tells Maestro to work it.
 trigger_column: "In Progress"
 
-# --- Optional (defaults shown) ---
+# =============================================================================
+# Board columns -- match these to your project board's Status values
+# =============================================================================
 
 # Status-field value a worker parks its card in when it opens its PR.
 # Reaching this column is how Maestro classifies a run as "done".
@@ -24,6 +32,10 @@ review_column: "In Review"
 # Status-field value a worker parks its card in when it cannot proceed.
 # Reaching this column is how Maestro classifies a run as "blocked".
 blocked_column: "Blocked"
+
+# =============================================================================
+# Scheduling & retries
+# =============================================================================
 
 # Hard ceiling on simultaneously running workers. Each worker is heavy.
 max_concurrent: 2
@@ -41,11 +53,12 @@ poll_interval: 60
 # column. Must be a positive integer.
 max_consecutive_failures: 3
 
+# =============================================================================
+# Worker
+# =============================================================================
+
 # Prompt handed to each worker. Must contain the {issue} placeholder.
 worker_prompt: "/cc-work {issue}"
-
-# Colour theme for `maestro status`. Built in: nord, dark, light.
-theme: "nord"
 
 # Shell command run inside each fresh worktree to provision its environment
 # (typically an isolated virtualenv). When unset, the repo's .venv is symlinked
@@ -53,6 +66,21 @@ theme: "nord"
 # checkout, so a worker's tests would run against the wrong code. Set this for
 # any repo whose workers change Python code. Example (requires uv):
 # worktree_setup: "uv venv .venv && uv pip install -e '.[dev]'"
+
+# =============================================================================
+# Board setup -- consulted only by `maestro setup`
+# =============================================================================
+
+# Priority-field options `maestro setup` creates when the board has no Priority
+# field yet, listed highest rank first. Used only at setup time: the scheduler
+# ranks live issues by the board's own option order, never this list, so editing
+# it after the field exists changes nothing. Override it to match a team's own
+# scale (e.g. ["P0", "P1", "P2"]). Must be a non-empty list of distinct names.
+priority_options: ["Critical", "High", "Normal", "Low"]
+
+# =============================================================================
+# Integrations
+# =============================================================================
 
 # Whether `maestro setup` materializes the optional CI workflow skeleton into
 # .github/workflows/maestro-ci.yml (you then commit it). CI is not required:
@@ -62,3 +90,15 @@ theme: "nord"
 # test command, so leave this off until you have one -- an unconfigured pipeline
 # either lies green or reds every PR, and both poison the rework signal.
 manage_ci: false
+
+# =============================================================================
+# Display & networking
+# =============================================================================
+
+# Colour theme for `maestro status`. Built in: nord, dark, light.
+theme: "nord"
+
+# Seconds a synchronous `gh` call may run before it is abandoned. Used by the
+# read-only issue-title lookups behind `maestro status`; raise it when a slow
+# network or a sluggish GitHub API makes those lookups time out. Positive int.
+gh_timeout: 15
