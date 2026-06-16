@@ -165,19 +165,66 @@ def test_reconcile_in_sync(tmp_path):
     assert results["CI workflow"].status is ReconcileStatus.NO_TEMPLATE
 
 
-def test_reconcile_drift_is_reported_not_overwritten(tmp_path):
+def test_reconcile_worker_skill_difference_is_informational_not_drift(tmp_path):
+    """An adapted skill differs from the generic contract by design — not drift.
+
+    The cc-work SKILL.md is a Claude-specific implementation of the model-agnostic
+    contract template, so it will always differ. Without base-version tracking
+    (#19) and a 3-way compare (#21) the difference is downgraded to a quiet
+    informational note rather than a permanent "differs".
+    """
     package_root = tmp_path / "pkg"
     repo = tmp_path / "repo"
-    _stage_templates(package_root, worker="new upstream skill\n", config="repo_slug: x\n")
+    _stage_templates(package_root, worker="generic contract\n", config="repo_slug: x\n")
     skill = repo / ".claude" / "skills" / "cc-work" / "SKILL.md"
-    _write(skill, "my edited skill\n")
+    _write(skill, "my adapted skill\n")
     _write(repo / "maestro.yml", "repo_slug: x\n")
 
     results = {r.name: r for r in reconcile(repo, package_root)}
-    assert results["worker skill"].status is ReconcileStatus.DRIFTED
-    assert "will not overwrite" in results["worker skill"].detail
+    assert results["worker skill"].status is ReconcileStatus.INFORMATIONAL
+    assert results["worker skill"].status is not ReconcileStatus.DRIFTED
     # The user's copy is untouched.
-    assert skill.read_text(encoding="utf-8") == "my edited skill\n"
+    assert skill.read_text(encoding="utf-8") == "my adapted skill\n"
+
+
+def test_reconcile_correctly_set_up_repo_is_clean_with_no_false_positives(tmp_path):
+    """End-to-end: a filled-in config and an adapted skill report a clean roll-up.
+
+    The config carries real (non-placeholder) values for every shipped key and the
+    skill is adapted from the contract — exactly a correctly-configured repo. The
+    summary must read "in sync" with no false "differs".
+    """
+    package_root = tmp_path / "pkg"
+    repo = tmp_path / "repo"
+    template_config = "repo_slug: your-org/your-project\nproject_number: 1\n"
+    _stage_templates(package_root, worker="generic contract\n", config=template_config)
+    _write(repo / ".claude" / "skills" / "cc-work" / "SKILL.md", "my adapted skill\n")
+    _write(repo / "maestro.yml", "repo_slug: me/mine\nproject_number: 42\n")
+    (repo / ".github" / "workflows").mkdir(parents=True)
+
+    summary = summarize_reconciliation(reconcile(repo, package_root))
+    assert summary.all_in_sync is True
+    assert summary.needs_attention == ()
+    assert [r.name for r in summary.verified] == ["config"]
+    assert [r.name for r in summary.informational] == ["worker skill"]
+
+
+def test_reconcile_config_in_sync_when_values_differ_but_keys_match(tmp_path):
+    """A filled-in config differs from the placeholder example only in values."""
+    package_root = tmp_path / "pkg"
+    repo = tmp_path / "repo"
+    template = "repo_slug: your-org/your-project\nproject_number: 1\ntrigger_column: In Progress\n"
+    _stage_templates(package_root, worker="skill\n", config=template)
+    _write(repo / ".claude" / "skills" / "cc-work" / "SKILL.md", "skill\n")
+    _write(
+        repo / "maestro.yml",
+        "repo_slug: me/mine\nproject_number: 42\ntrigger_column: Ready\n",
+    )
+
+    results = {r.name: r for r in reconcile(repo, package_root)}
+    config_result = results["config"]
+    assert config_result.status is ReconcileStatus.IN_SYNC
+    assert config_result.new_config_keys == ()
 
 
 def test_reconcile_missing_dependency(tmp_path):
@@ -260,6 +307,26 @@ def test_summary_drift_blocks_in_sync():
     )
     assert summary.all_in_sync is False
     assert {r.name for r in summary.needs_attention} == {"config"}
+
+
+def test_summary_informational_does_not_block_in_sync():
+    """An informational note rides alongside a clean roll-up, never blocking it."""
+    summary = summarize_reconciliation(
+        (
+            _recon("config", ReconcileStatus.IN_SYNC),
+            _recon("worker skill", ReconcileStatus.INFORMATIONAL),
+            _recon("CI workflow", ReconcileStatus.NO_TEMPLATE),
+        )
+    )
+    assert summary.all_in_sync is True
+    assert [r.name for r in summary.informational] == ["worker skill"]
+
+
+def test_summary_only_informational_is_not_a_no_op():
+    """An informational note means a comparison was made — not 'nothing compared'."""
+    summary = summarize_reconciliation((_recon("worker skill", ReconcileStatus.INFORMATIONAL),))
+    assert summary.nothing_compared is False
+    assert summary.all_in_sync is False  # nothing was verified
 
 
 def test_summary_nothing_compared_is_a_no_op_not_sync():
