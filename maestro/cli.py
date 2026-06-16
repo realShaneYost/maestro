@@ -331,6 +331,7 @@ _RECONCILE_MARK = {
     ReconcileStatus.MISSING: "[error]✗[/error]",
     ReconcileStatus.NO_TEMPLATE: "[message]·[/message]",
     ReconcileStatus.TEMPLATE_UNAVAILABLE: "[yellow]?[/yellow]",
+    ReconcileStatus.INFORMATIONAL: "[message]i[/message]",
 }
 
 
@@ -374,6 +375,7 @@ def _print_reconcile_summary(console: Console, summary: ReconcileSummary) -> Non
     """
     if summary.all_in_sync:
         console.print("\nAll editable dependencies are in sync.")
+        _print_informational_note(console, summary)
         return
     if summary.unverifiable:
         noun = "dependency" if len(summary.unverifiable) == 1 else "dependencies"
@@ -395,6 +397,26 @@ def _print_reconcile_summary(console: Console, summary: ReconcileSummary) -> Non
             "\n[error]Nothing was compared[/error] — no dependency ships a packaged "
             "template to check against, so this is a no-op, not a clean bill of health."
         )
+    _print_informational_note(console, summary)
+
+
+def _print_informational_note(console: Console, summary: ReconcileSummary) -> None:
+    """Render a quiet note for dependencies that differ from their template by design.
+
+    The worker skill is an implementation of a model-agnostic contract, so it
+    differs from the shipped template permanently. That is not drift and needs no
+    action, so it is surfaced as a muted note — never a warning — even alongside an
+    overall "in sync" roll-up.
+    """
+    if not summary.informational:
+        return
+    noun = "dependency" if len(summary.informational) == 1 else "dependencies"
+    names = ", ".join(item.name for item in summary.informational)
+    console.print(
+        f"\n[message]Informational: {len(summary.informational)} {noun} ({names}) "
+        "differ from the shipped template by design — not drift, nothing to "
+        "reconcile.[/message]"
+    )
 
 
 def _cmd_update(args: argparse.Namespace) -> int:

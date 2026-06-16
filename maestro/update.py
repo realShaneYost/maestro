@@ -42,7 +42,7 @@ import yaml
 
 from maestro.config import Config
 from maestro.install import InstallInfo, InstallSource, detect_install
-from maestro.manifest import MANIFEST, PACKAGE_FILES, Dependency, read_template
+from maestro.manifest import MANIFEST, PACKAGE_FILES, WORKER_SKILL, Dependency, read_template
 
 # (args) -> (returncode, stdout, stderr). Mirrors the doctor's gh runner shape so
 # the suite can drive `maestro update` with canned uv output.
@@ -125,6 +125,7 @@ class ReconcileStatus(enum.Enum):
     MISSING = "missing"
     NO_TEMPLATE = "no template"
     TEMPLATE_UNAVAILABLE = "template unavailable"
+    INFORMATIONAL = "informational"
 
 
 @dataclass(frozen=True)
@@ -378,6 +379,108 @@ def _reconcile_dependency(
             f"present but could not be read: {err}",
         )
 
+    if dependency.name == "config":
+        return _reconcile_config(dependency, repo_text, template_text)
+    if dependency.name == WORKER_SKILL:
+        return _reconcile_worker_skill(dependency, repo_text, template_text)
+    return _reconcile_content(dependency, repo_text, template_text)
+
+
+def _reconcile_config(
+    dependency: Dependency, repo_text: str, template_text: str
+) -> DependencyReconciliation:
+    """Reconcile ``maestro.yml`` by key schema, never by raw content.
+
+    The shipped example carries placeholder values (``your-org/your-project``,
+    ``project_number: 1``) that a filled-in config is *supposed* to differ from,
+    so a raw content diff is a permanent false positive. The only actionable
+    signal is key-schema drift: a top-level key the example gained that the
+    user's file lacks. Values are the user's to set and are never reported.
+
+    Args:
+        dependency: The config manifest entry.
+        repo_text: The user's ``maestro.yml`` contents.
+        template_text: The shipped ``maestro.example.yml`` contents.
+
+    Returns:
+        DRIFTED carrying the new keys when the schema drifted; IN_SYNC otherwise,
+        regardless of how the values differ.
+    """
+    new_keys = _new_config_keys(repo_text, template_text)
+    if new_keys:
+        return DependencyReconciliation(
+            dependency.name,
+            dependency.location,
+            ReconcileStatus.DRIFTED,
+            "config schema drift — the shipped example added top-level key(s) your "
+            "maestro.yml lacks; add them by hand. Differing values are expected and "
+            "are not reported.",
+            new_keys,
+        )
+    return DependencyReconciliation(
+        dependency.name,
+        dependency.location,
+        ReconcileStatus.IN_SYNC,
+        "all top-level keys present; values are yours to set",
+    )
+
+
+def _reconcile_worker_skill(
+    dependency: Dependency, repo_text: str, template_text: str
+) -> DependencyReconciliation:
+    """Reconcile the worker skill, tolerating the contract-vs-implementation delta.
+
+    ``.claude/skills/cc-work/SKILL.md`` is a Claude-specific *implementation* of
+    the model-agnostic *contract* shipped at ``templates/worker-skill.md``; the
+    two differ by design, so a raw content diff is a permanent false positive.
+    Telling a genuine upstream change apart from that intentional adaptation needs
+    the base version the skill was provisioned from (#19) and a 3-way compare
+    (#21). Until that base tracking exists, a content difference is downgraded to
+    a quiet informational note rather than a permanent "differs".
+
+    Args:
+        dependency: The worker-skill manifest entry.
+        repo_text: The repo's ``SKILL.md`` contents.
+        template_text: The shipped ``worker-skill.md`` contract contents.
+
+    Returns:
+        IN_SYNC on an exact match; INFORMATIONAL otherwise.
+    """
+    if repo_text == template_text:
+        return DependencyReconciliation(
+            dependency.name,
+            dependency.location,
+            ReconcileStatus.IN_SYNC,
+            "matches the packaged contract template",
+        )
+    return DependencyReconciliation(
+        dependency.name,
+        dependency.location,
+        ReconcileStatus.INFORMATIONAL,
+        "differs from the packaged contract template — expected, since the cc-work "
+        "skill is a Claude-specific implementation of a model-agnostic contract. "
+        "Flagging only genuine upstream changes needs base-version tracking (#19) "
+        "and a 3-way compare (#21); until then this is informational, not drift.",
+    )
+
+
+def _reconcile_content(
+    dependency: Dependency, repo_text: str, template_text: str
+) -> DependencyReconciliation:
+    """Reconcile a templated dependency by exact content match.
+
+    The conservative default for any future templated artifact whose repo copy is
+    meant to track the shipped template verbatim.
+
+    Args:
+        dependency: The manifest entry being reconciled.
+        repo_text: The repo copy's contents.
+        template_text: The shipped template's contents.
+
+    Returns:
+        IN_SYNC on an exact match; DRIFTED otherwise. Drift is reported, never
+        reconciled — Maestro never overwrites a user's copy.
+    """
     if repo_text == template_text:
         return DependencyReconciliation(
             dependency.name,
@@ -385,15 +488,12 @@ def _reconcile_dependency(
             ReconcileStatus.IN_SYNC,
             "matches the packaged template",
         )
-
-    new_keys = _new_config_keys(repo_text, template_text) if dependency.name == "config" else ()
     return DependencyReconciliation(
         dependency.name,
         dependency.location,
         ReconcileStatus.DRIFTED,
         "differs from the packaged template — review and reconcile by hand; "
         "Maestro will not overwrite your copy",
-        new_keys,
     )
 
 
@@ -431,12 +531,18 @@ class ReconcileSummary:
             false-positive risk: nothing about them is known to be in sync.
         not_applicable: Dependencies that ship no template by design, so there was
             nothing to compare. Benign — neither a problem nor evidence of sync.
+        informational: Dependencies that differ from their shipped template by
+            design (the worker skill is an implementation of a contract), reported
+            as a quiet note rather than drift. Not actionable, so they never block
+            an "in sync" roll-up — but a comparison was made, so a run that
+            surfaced one is not a no-op.
     """
 
     verified: tuple[DependencyReconciliation, ...]
     needs_attention: tuple[DependencyReconciliation, ...]
     unverifiable: tuple[DependencyReconciliation, ...]
     not_applicable: tuple[DependencyReconciliation, ...]
+    informational: tuple[DependencyReconciliation, ...] = ()
 
     @property
     def all_in_sync(self) -> bool:
@@ -452,11 +558,14 @@ class ReconcileSummary:
     def nothing_compared(self) -> bool:
         """Whether no dependency could be compared at all.
 
-        True when nothing matched, drifted, went missing, or was unverifiable —
-        every dependency simply had no template to compare against. Such a run is
-        a no-op, distinct from a verified-clean one and never reported as success.
+        True when nothing matched, drifted, went missing, was unverifiable, or
+        surfaced an informational note — every dependency simply had no template to
+        compare against. Such a run is a no-op, distinct from a verified-clean one
+        and never reported as success.
         """
-        return not (self.verified or self.needs_attention or self.unverifiable)
+        return not (
+            self.verified or self.needs_attention or self.unverifiable or self.informational
+        )
 
 
 # Statuses that mean "compared, and the comparison found something to act on."
@@ -479,6 +588,7 @@ def summarize_reconciliation(
     needs_attention: list[DependencyReconciliation] = []
     unverifiable: list[DependencyReconciliation] = []
     not_applicable: list[DependencyReconciliation] = []
+    informational: list[DependencyReconciliation] = []
     for item in reconciliations:
         if item.status is ReconcileStatus.IN_SYNC:
             verified.append(item)
@@ -486,6 +596,8 @@ def summarize_reconciliation(
             needs_attention.append(item)
         elif item.status is ReconcileStatus.TEMPLATE_UNAVAILABLE:
             unverifiable.append(item)
+        elif item.status is ReconcileStatus.INFORMATIONAL:
+            informational.append(item)
         else:  # NO_TEMPLATE — ships nothing to compare against, by design.
             not_applicable.append(item)
     return ReconcileSummary(
@@ -493,6 +605,7 @@ def summarize_reconciliation(
         needs_attention=tuple(needs_attention),
         unverifiable=tuple(unverifiable),
         not_applicable=tuple(not_applicable),
+        informational=tuple(informational),
     )
 
 
